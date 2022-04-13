@@ -2,7 +2,11 @@
 name = "firerust"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+readme = "README.md"
+license = "GNU General Public License v3.0"
+authors = ["Daniel Dimbarre <contato@danieldimbarre.pl>"]
+homepage = "https://github.com/danieldimbarre/Firerust.git"
+repository = "https://github.com/danieldimbarre/Firerust.git"
+description = "A simple library for Realtime Database of Firebase."
 
 [dependencies]

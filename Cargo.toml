@@ -10,3 +10,7 @@ repository = "https://github.com/danieldimbarre/Firerust.git"
 description = "A simple library for Realtime Database of Firebase."
 
 [dependencies]
+url = { version = "2.2.2" }
+native-tls = { version = "0.2.10" }
+serde_json = { version = "1.0.79" }
+serde = { version = "1.0.136", features = ["derive"] }

@@ -71,15 +71,33 @@ impl RealtimeReference {
             None => return Err(Box::new(FirebaseError::new("Invalid URL")))
         };
 
-        let mut buf = Vec::new();
+        let mut buf = String::new();
         let stream = TcpStream::connect(format!("{}:{}", host, port))?;
         let mut stream = self.client.connector.connect(host, stream)?;
 
-        stream.write_all(format!("GET {}.json HTTP/1.0\r\nHost: {}\r\nAccept: application/json; charset=utf-8\r\n\r\n", self.path, host).as_bytes())?;
-        stream.read_to_end(&mut buf)?;
+        stream.write_all(format!("GET {}.json HTTP/1.0\r\nHost: {}\r\nAccept: application/json; charset=utf-8\r\nCache-Control: no-cache\r\n\r\n", self.path, host).as_bytes())?;
+        stream.read_to_string(&mut buf)?;
 
-        let response = String::from_utf8(buf)?;
-        let body = response.split("\r\n\r\n").collect::<Vec<&str>>()[1];
+        let mut response = buf.split("\r\n\r\n");
+        
+        let mut header = match response.next() {
+            Some(header) => header.lines(),
+            None => return Err(Box::new(FirebaseError::new("Invalid response")))
+        };
+
+        let body = match response.next() {
+            Some(body) => body,
+            None => return Err(Box::new(FirebaseError::new("Invalid response")))
+        };
+
+        let status = match header.next() {
+            Some(status) => status.split(" ").collect::<Vec<&str>>(),
+            None => return Err(Box::new(FirebaseError::new("Invalid response")))
+        };
+
+        if status[1] != "200" {
+            return Err(Box::new(FirebaseError::new(format!("{} {}", status[1], status[2]))));
+        }
 
         Ok(serde_json::from_str(body)?)
     }
@@ -91,7 +109,7 @@ struct FirebaseError {
 }
 
 impl FirebaseError {
-    fn new(message: &str) -> FirebaseError {
+    fn new(message: impl ToString) -> FirebaseError {
         FirebaseError {
             message: message.to_string()
         }

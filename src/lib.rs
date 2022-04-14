@@ -34,7 +34,7 @@ impl FirebaseClient {
         })
     }
 
-    pub fn auth(&mut self, api_key: &str) {
+    pub fn auth(&mut self, api_key: impl ToString) {
         self.api_key = Some(api_key.to_string());
     }
 
@@ -75,7 +75,10 @@ impl RealtimeReference {
         let stream = TcpStream::connect(format!("{}:{}", host, port))?;
         let mut stream = self.client.connector.connect(host, stream)?;
 
-        stream.write_all(format!("GET {}.json HTTP/1.0\r\nHost: {}\r\nAccept: application/json; charset=utf-8\r\nCache-Control: no-cache\r\n\r\n", self.path, host).as_bytes())?;
+        stream.write_all(format!("GET {}.json{} HTTP/1.0\r\nHost: {}\r\nAccept: application/json; charset=utf-8\r\nCache-Control: no-cache\r\n\r\n", self.path, match self.client.api_key {
+            Some(ref api_key) => format!("?auth={}", api_key),
+            None => "".to_string()
+        }, host).as_bytes())?;
         stream.read_to_string(&mut buf)?;
 
         let mut response = buf.split("\r\n\r\n");

@@ -1,6 +1,8 @@
 use serde::{ Serialize, Deserialize };
 use firerust::FirebaseClient;
+use serde_json::Value;
 use std::error::Error;
+
 
 fn main() -> Result<(), Box<dyn Error>> {
     let client = FirebaseClient::new(std::env::var("FIREBASE_URL")?)?;
@@ -8,6 +10,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     reference.set(Data::new("A simple data"))?;
     println!("{:?}", reference.get::<Data>()?);
+
+    reference.update(serde_json::json!({
+        "message": "Updating data"
+    }))?;
+    println!("{:?}", reference.get::<Value>()?);
 
     Ok(())
 }

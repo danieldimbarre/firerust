@@ -17,10 +17,20 @@ pub struct FirebaseClient {
 
 impl FirebaseClient {
     pub fn new(url: impl ToString) -> Result<FirebaseClient, Box<dyn Error>> {
+        let url = Url::parse(&url.to_string())?;
+
+        if let Some(domain) = url.domain() {
+            if !domain.contains(".firebaseio.com") && !domain.contains(".firebasedatabase.app") {
+                return Err(Box::new(FirebaseError::new("Invalid domain")));
+            }
+        } else {
+            return Err(Box::new(FirebaseError::new("Invalid domain")));
+        };
+
         Ok(FirebaseClient {
+            url,
             api_key: None,
             connector: TlsConnector::new()?,
-            url: Url::parse(&url.to_string())?,
         })
     }
 
@@ -53,10 +63,7 @@ impl RealtimeReference {
     pub fn get<T>(&self) -> Result<T, Box<dyn Error>> where T: Serialize + DeserializeOwned + Debug {
         let host = match self.client.url.domain() {
             Some(host) => host,
-            None => match self.client.url.host_str() {
-                Some(host) => host,
-                None => return Err(Box::new(FirebaseError::new("Invalid URL")))
-            }
+            None => return Err(Box::new(FirebaseError::new("Invalid URL")))
         };
 
         let port = match self.client.url.port_or_known_default() {

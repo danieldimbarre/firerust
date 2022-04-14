@@ -16,6 +16,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     }))?;
     println!("{:?}", reference.get::<Value>()?);
 
+    reference.delete()?;
+    println!("{:?}", reference.get::<Value>()?);
+
     Ok(())
 }
 

@@ -122,8 +122,8 @@ impl RealtimeReference {
         let stream = TcpStream::connect(format!("{}:{}", host, port))?;
         let mut stream = self.client.connector.connect(host, stream)?;
 
-        stream.write_all(format!("PUT {}.json{} HTTP/1.0\r\nHost: {}\r\nAccept: */*\r\nContent-Length: {}\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n{}", self.path, match self.client.api_key {
-            Some(ref api_key) => format!("?auth={}", api_key),
+        stream.write_all(format!("PUT {}.json?print=silent{} HTTP/1.0\r\nHost: {}\r\nAccept: */*\r\nContent-Length: {}\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n{}", self.path, match self.client.api_key {
+            Some(ref api_key) => format!("&auth={}", api_key),
             None => "".to_string()
         }, host, data.as_bytes().len(), data).as_bytes())?;
         stream.read_to_string(&mut buf)?;
@@ -140,7 +140,7 @@ impl RealtimeReference {
             None => return Err(Box::new(FirebaseError::new("Invalid response")))
         };
 
-        if status[1] != "200" {
+        if status[1] != "204" {
             return Err(Box::new(FirebaseError::new(format!("{} {}", status[1], status[2]))));
         }
 
@@ -164,8 +164,8 @@ impl RealtimeReference {
         let stream = TcpStream::connect(format!("{}:{}", host, port))?;
         let mut stream = self.client.connector.connect(host, stream)?;
 
-        stream.write_all(format!("POST {}.json{} HTTP/1.0\r\nHost: {}\r\nAccept: */*\r\nContent-Length: {}\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n{}", self.path, match self.client.api_key {
-            Some(ref api_key) => format!("?auth={}", api_key),
+        stream.write_all(format!("POST {}.json?print=silent{} HTTP/1.0\r\nHost: {}\r\nAccept: */*\r\nContent-Length: {}\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n{}", self.path, match self.client.api_key {
+            Some(ref api_key) => format!("&auth={}", api_key),
             None => "".to_string()
         }, host, data.as_bytes().len(), data).as_bytes())?;
         stream.read_to_string(&mut buf)?;
@@ -182,7 +182,7 @@ impl RealtimeReference {
             None => return Err(Box::new(FirebaseError::new("Invalid response")))
         };
 
-        if status[1] != "200" {
+        if status[1] != "204" {
             return Err(Box::new(FirebaseError::new(format!("{} {}", status[1], status[2]))));
         }
 
@@ -206,8 +206,8 @@ impl RealtimeReference {
         let stream = TcpStream::connect(format!("{}:{}", host, port))?;
         let mut stream = self.client.connector.connect(host, stream)?;
 
-        stream.write_all(format!("PATCH {}.json{} HTTP/1.0\r\nHost: {}\r\nAccept: */*\r\nContent-Length: {}\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n{}", self.path, match self.client.api_key {
-            Some(ref api_key) => format!("?auth={}", api_key),
+        stream.write_all(format!("PATCH {}.json?print=silent{} HTTP/1.0\r\nHost: {}\r\nAccept: */*\r\nContent-Length: {}\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n{}", self.path, match self.client.api_key {
+            Some(ref api_key) => format!("&auth={}", api_key),
             None => "".to_string()
         }, host, data.as_bytes().len(), data).as_bytes())?;
         stream.read_to_string(&mut buf)?;
@@ -224,7 +224,7 @@ impl RealtimeReference {
             None => return Err(Box::new(FirebaseError::new("Invalid response")))
         };
 
-        if status[1] != "200" {
+        if status[1] != "204" {
             return Err(Box::new(FirebaseError::new(format!("{} {}", status[1], status[2]))));
         }
 
@@ -246,8 +246,8 @@ impl RealtimeReference {
         let stream = TcpStream::connect(format!("{}:{}", host, port))?;
         let mut stream = self.client.connector.connect(host, stream)?;
 
-        stream.write_all(format!("DELETE {}.json{} HTTP/1.0\r\nHost: {}\r\nAccept: */*\r\n\r\n", self.path, match self.client.api_key {
-            Some(ref api_key) => format!("?auth={}", api_key),
+        stream.write_all(format!("DELETE {}.json?print=silent{} HTTP/1.0\r\nHost: {}\r\nAccept: */*\r\n\r\n", self.path, match self.client.api_key {
+            Some(ref api_key) => format!("&auth={}", api_key),
             None => "".to_string()
         }, host).as_bytes())?;
         stream.read_to_string(&mut buf)?;
@@ -264,7 +264,7 @@ impl RealtimeReference {
             None => return Err(Box::new(FirebaseError::new("Invalid response")))
         };
 
-        if status[1] != "200" {
+        if status[1] != "204" {
             return Err(Box::new(FirebaseError::new(format!("{} {}", status[1], status[2]))));
         }
 

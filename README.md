@@ -4,11 +4,11 @@ A very simple library to implement the Firebase real-time database in your code 
 
 <p>
     <center>
-        <a href="https://crates.io/crates/firerust"><img src="https://img.shields.io/crates/v/firerust.svg" height=22></a>
-        <a href="https://github.com/danieldimbarre/Firerust/blob/main/LICENSE"><img src="https://img.shields.io/github/license/danieldimbarre/firerust.svg" height=22></a>
-        <a href="https://github.com/danieldimbare/firerust"><img src="https://img.shields.io/github/downloads/danieldimbarre/firerust/total.svg" height=22></a> 
-        <a href="https://github.com/danieldimbarre/Firerust/issues"><img src="https://img.shields.io/github/issues/danieldimbarre/firerust.svg" height=22></a>
-        <a href="https://github.com/danieldimbarre/Firerust/pulls"><img src="https://img.shields.io/github/issues-pr/danieldimbarre/firerust.svg" height=22></a> 
+        <a href="https://crates.io/crates/firerust"><img src="https://img.shields.io/crates/v/firerust.svg?style=for-the-badge&logo=rust" height=22></a>
+        <a href="https://docs.rs/firerust/latest/firerust/"><img src="https://img.shields.io/badge/docs.rs-Firerust-66c2a5?style=for-the-badge&labelColor=555555&logoColor=white&logo=docs.rs" height=22></a>
+        <a href="https://github.com/danieldimbarre/Firerust/blob/main/LICENSE"><img src="https://img.shields.io/github/license/danieldimbarre/firerust.svg?style=for-the-badge" height=22></a>
+        <a href="https://github.com/danieldimbare/firerust"><img src="https://img.shields.io/crates/dv/firerust?style=for-the-badge" height=22></a> 
+        <a href="https://signal.group/#CjQKIEut8ZhBy03B3v3eN2EvQxuDjGE21rSAOHvahJJ9FFgTEhAvnRZs_vqd1PrxL16iy7m9"><img src="https://img.shields.io/badge/Signal-Firerust-00B2FF?style=for-the-badge&logo=signal&logoColor=white&labelColor=555555" height=22></a>
     </center>
 </p>
 

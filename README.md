@@ -3,15 +3,13 @@
 A very simple library to implement the Firebase real-time database in your code with the best performance
 
 <p>
-    <br>
     <center>
-        <a href="https://github.com/danieldimbarre/Firerust/blob/main/LICENSE"><img src="https://img.shields.io/github/license/danieldimbarre/firerust.svg" height=25></a>
-        <a href="https://github.com/danieldimbare/firerust"><img src="https://img.shields.io/github/downloads/danieldimbarre/firerust/total.svg" height=25></a> 
+        <a href="https://crates.io/crates/firerust"><img src="https://img.shields.io/crates/v/firerust.svg" height=22></a>
+        <a href="https://github.com/danieldimbarre/Firerust/blob/main/LICENSE"><img src="https://img.shields.io/github/license/danieldimbarre/firerust.svg" height=22></a>
+        <a href="https://github.com/danieldimbare/firerust"><img src="https://img.shields.io/github/downloads/danieldimbarre/firerust/total.svg" height=22></a> 
         <a href="https://github.com/danieldimbarre/Firerust/issues"><img src="https://img.shields.io/github/issues/danieldimbarre/firerust.svg" height=22></a>
         <a href="https://github.com/danieldimbarre/Firerust/pulls"><img src="https://img.shields.io/github/issues-pr/danieldimbarre/firerust.svg" height=22></a> 
     </center>
-    <br>
-    <br>
 </p>
 
 # Instalation

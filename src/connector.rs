@@ -110,6 +110,70 @@ impl Connector {
 
         Ok(Response::new(body, Status::new(status_code, status_message)))
     }
+
+    pub fn event_stream(&self, path: String, params: String) -> Result<(Status, EventStream, TlsStream<TcpStream>), Box<dyn Error>> {
+        let tlsconnector = TlsConnector::new()?;
+
+        let mut stream = match TcpStream::connect(self.host.clone()) {
+            Ok(stream) => {
+                stream.set_nodelay(true)?;
+                tlsconnector.connect(&self.domain, stream)?
+            },
+            Err(_) => return Err(Box::new(ConnectorError::GatewayTimeout))
+        };
+
+        stream.write_all(format!("GET {}.json{} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5, max=100\r\nAccept: text/event-stream\r\nCache-Control: no-cache\r\n\r\n", path, params, self.domain).as_bytes())?;
+
+        let mut data = Vec::new();
+
+        loop {
+            let buffer = &mut [0; 1024];
+            let size = stream.read(buffer)?;
+
+            data.extend_from_slice(&buffer[0..size]);
+
+            if size < 1024 {
+                break;
+            }
+        }
+
+        let response = String::from_utf8(data)?;
+        let mut response = response.split("\r\n\r\n");
+
+        let mut header = match response.next() {
+            Some(header) => header.lines(),
+            None => return Err(Box::new(ConnectorError::InvalidResponse))
+        };
+        
+        let body = match response.next() {
+            Some(body) => body,
+            None => return Err(Box::new(ConnectorError::InvalidResponse))
+        };
+
+        let status_line = match header.next() {
+            Some(status_line) => status_line.split(" ").collect::<Vec<&str>>(),
+            None => return Err(Box::new(ConnectorError::InvalidResponse))
+        };
+
+        let status_code = match status_line.get(1) {
+            Some(status_code) => match status_code.parse::<u16>() {
+                Ok(status_code) => status_code,
+                Err(_) => return Err(Box::new(ConnectorError::InvalidResponse))
+            },
+            None => return Err(Box::new(ConnectorError::InvalidResponse))
+        };
+
+        let status_message = match status_line.get(2) {
+            Some(status_message) => status_message.to_string(),
+            None => return Err(Box::new(ConnectorError::InvalidResponse))
+        };
+
+        if body == "" {
+            return Err(Box::new(ConnectorError::GatewayTimeout));
+        }
+
+        Ok((Status::new(status_code, status_message), EventStream::try_from(body.to_string())?, stream))
+    }
 }
 
 
@@ -165,22 +229,93 @@ impl Response {
 }
 
 
+pub enum EventType {
+    Put,
+    Patch,
+    Cancel,
+    KeepAlive,
+    AuthRevoked
+}
+
+impl From<String> for EventType {
+    fn from(event: String) -> EventType {
+        match event.as_str() {
+            "put" => EventType::Put,
+            "patch" => EventType::Patch,
+            "cancel" => EventType::Cancel,
+            "keep-alive" => EventType::KeepAlive,
+            "auth_revoked" => EventType::AuthRevoked,
+            _ => EventType::Put
+        }
+    }
+}
+
+
+pub struct EventStream {
+    event: EventType,
+    data: String,
+}
+
+impl EventStream {
+    pub fn new(event: impl ToString, data: impl ToString) -> EventStream {
+        EventStream {
+            data: data.to_string(),
+            event: EventType::from(event.to_string())
+        }
+    }
+
+    pub fn event(&self) -> &EventType {
+        &self.event
+    }
+
+    pub fn data(&self) -> &str {
+        &self.data
+    }
+}
+
+impl TryFrom<String> for EventStream {
+    type Error = &'static str;
+
+    fn try_from(data: String) -> Result<Self, Self::Error> {
+        let mut event_stream = data.lines().filter(|l| l.contains(":"));
+
+        let event = match event_stream.next() {
+            Some(event) => match event.strip_prefix("event: ") {
+                Some(event) => event.to_string(),
+                None => return Err("Invalid event")
+            },
+            None => return Err("Invalid event stream")
+        };
+
+        let data = match event_stream.next() {
+            Some(data) => match data.strip_prefix("data: ") {
+                Some(data) => data.to_string(),
+                None => return Err("Invalid data")
+            },
+            None => return Err("Invalid event stream")
+        };
+
+        Ok(EventStream::new(event, data))
+    }
+}
+
+
 pub enum Method {
-    GET,
-    PUT,
-    POST,
-    PATCH,
-    DELETE
+    Get,
+    Put,
+    Post,
+    Patch,
+    Delete
 }
 
 impl ToString for Method {
     fn to_string(&self) -> String {
         match self {
-            Method::GET => "GET",
-            Method::PUT => "PUT",
-            Method::POST => "POST",
-            Method::PATCH => "PATCH",
-            Method::DELETE => "DELETE"
+            Method::Get => "GET",
+            Method::Put => "PUT",
+            Method::Post => "POST",
+            Method::Patch => "PATCH",
+            Method::Delete => "DELETE"
         }.to_string()
     }
 }

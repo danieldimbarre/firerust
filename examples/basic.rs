@@ -7,7 +7,7 @@ use std::error::Error;
 fn main() -> Result<(), Box<dyn Error>> {
     let client = FirebaseClient::new(std::env::var("FIREBASE_URL")?)?;
     let reference = client.reference("/data");
-
+    
     reference.set(Data::new("A simple data"))?;
     println!("{:?}", reference.get::<Data>()?);
 

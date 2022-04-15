@@ -122,12 +122,13 @@ impl Connector {
             Err(_) => return Err(Box::new(ConnectorError::GatewayTimeout))
         };
 
-        stream.write_all(format!("GET {}.json{} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5, max=100\r\nAccept: text/event-stream\r\nCache-Control: no-cache\r\n\r\n", path, params, self.domain).as_bytes())?;
+        stream.write_all(format!("GET {}.json{} HTTP/1.1\r\nHost: {}\r\nAccept: text/event-stream\r\n\r\n", path, params, self.domain).as_bytes())?;
+        stream.flush()?;
 
         let mut data = Vec::new();
 
         loop {
-            let buffer = &mut [0; 1024];
+            let buffer = &mut [0; 2048];
             let size = stream.read(buffer)?;
 
             data.extend_from_slice(&buffer[0..size]);
@@ -137,16 +138,16 @@ impl Connector {
             }
         }
 
-        let response = String::from_utf8(data)?;
-        let mut response = response.split("\r\n\r\n");
+        let _tmp = String::from_utf8(data)?;
+        let mut response = _tmp.split("\r\n\r\n");
 
         let mut header = match response.next() {
             Some(header) => header.lines(),
             None => return Err(Box::new(ConnectorError::InvalidResponse))
         };
         
-        let body = match response.next() {
-            Some(body) => body,
+        let mut body = match response.next() {
+            Some(body) => body.to_string(),
             None => return Err(Box::new(ConnectorError::InvalidResponse))
         };
 
@@ -169,7 +170,20 @@ impl Connector {
         };
 
         if body == "" {
-            return Err(Box::new(ConnectorError::GatewayTimeout));
+            loop {
+                let buffer = &mut [0; 2048];
+                let size = stream.read(buffer)?;
+                let data = match String::from_utf8(buffer[0..size].to_vec()) {
+                    Ok(data) => data,
+                    Err(_) => return Err(Box::new(ConnectorError::GatewayTimeout))
+                };
+
+                body.push_str(&data);
+    
+                if size < 1024 {
+                    break;
+                }
+            }
         }
 
         Ok((Status::new(status_code, status_message), EventStream::try_from(body.to_string())?, stream))

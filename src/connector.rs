@@ -1,3 +1,12 @@
+//! # Example
+//! 
+//! ```rust
+//! use firerust::connector::Connector;
+//! 
+//! let connector = Connector::new("docs-example.firebaseio.com", 443)?;
+//! ```
+
+
 use native_tls::{ TlsConnector, TlsStream };
 use std::fmt::{ Display, Formatter };
 use std::sync::{ Arc, Mutex };
@@ -6,6 +15,7 @@ use std::net::TcpStream;
 use std::error::Error;
 
 
+/// A connector to a Firebase server.
 #[derive(Clone, Debug)]
 pub struct Connector {
     host: String,
@@ -14,6 +24,8 @@ pub struct Connector {
 }
 
 impl Connector {
+
+    /// Creates a new connector
     pub fn new(domain: impl ToString, port: impl ToString) -> Result<Connector, Box<dyn Error>> {
         let tlsconnector = TlsConnector::new()?;
 
@@ -32,6 +44,15 @@ impl Connector {
         })
     }
 
+    /// Reconnect to the server
+    /// 
+    /// # Example
+    /// ```rust
+    /// use firerust::connector::Connector;
+    /// 
+    /// let connector = Connector::new("docs-example.firebaseio.com", 443)?;
+    /// connector.reconnect()?;
+    /// ```
     pub fn reconnect(&self) -> Result<(), Box<dyn Error>> {
         let tlsconnector = TlsConnector::new()?;
 
@@ -53,6 +74,15 @@ impl Connector {
         Ok(())
     }
     
+    /// Send data to the server
+    /// 
+    /// # Example
+    /// ```rust
+    /// use firerust::connector::{ Connector, Method };
+    /// 
+    /// let connector = Connector::new("docs-example.firebaseio.com", 443)?;
+    /// connector.request(Method::Get, "/", None, None)?;
+    /// ```
     pub fn request(&self, method: Method, path: String, params: String, data: Option<String>) -> Result<Response, Box<dyn Error>> {
         let mut stream = match self.stream.lock() {
             Ok(stream) => stream,
@@ -111,6 +141,7 @@ impl Connector {
         Ok(Response::new(body, Status::new(status_code, status_message)))
     }
 
+    /// Connect to the server with event stream
     pub fn event_stream(&self, path: String, params: String) -> Result<(Status, EventStream, TlsStream<TcpStream>), Box<dyn Error>> {
         let tlsconnector = TlsConnector::new()?;
 
@@ -191,12 +222,15 @@ impl Connector {
 }
 
 
+/// Status response
 pub struct Status {
     code: u16,
     message: String
 }
 
 impl Status {
+
+    /// Create a new status
     pub fn new(code: u16, message: impl ToString) -> Status {
         Status {
             code: code,
@@ -204,10 +238,12 @@ impl Status {
         }
     }
 
+    /// Get the status code
     pub fn code(&self) -> u16 {
         self.code
     }
 
+    /// Get the status message
     pub fn message(&self) -> &str {
         &self.message
     }
@@ -220,12 +256,15 @@ impl Display for Status {
 }
 
 
+/// Database request response
 pub struct Response {
     body: String,
     status: Status,
 }
 
 impl Response {
+    
+    /// Create a new response
     pub fn new(body: impl ToString, status: Status) -> Response {
         Response {
             body: body.to_string(),
@@ -233,16 +272,19 @@ impl Response {
         }
     }
 
+    /// Get the response body
     pub fn body(&self) -> &str {
         &self.body
     }
 
+    /// Get the response status
     pub fn status(&self) -> &Status {
         &self.status
     }
 }
 
 
+/// Types of stream events
 pub enum EventType {
     Put,
     Patch,
@@ -265,12 +307,15 @@ impl From<String> for EventType {
 }
 
 
+/// Event stream parser
 pub struct EventStream {
     event: EventType,
     data: String,
 }
 
 impl EventStream {
+    
+    /// Create a new event stream
     pub fn new(event: impl ToString, data: impl ToString) -> EventStream {
         EventStream {
             data: data.to_string(),
@@ -278,10 +323,12 @@ impl EventStream {
         }
     }
 
+    /// Get the event type
     pub fn event(&self) -> &EventType {
         &self.event
     }
 
+    /// Get the event data
     pub fn data(&self) -> &str {
         &self.data
     }
@@ -314,6 +361,7 @@ impl TryFrom<String> for EventStream {
 }
 
 
+/// Database request methods
 pub enum Method {
     Get,
     Put,
@@ -335,6 +383,7 @@ impl ToString for Method {
 }
 
 
+/// Errors that can occur when getting a database response
 #[derive(Debug)]
 pub enum ConnectorError {
     LockError,

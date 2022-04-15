@@ -1,3 +1,33 @@
+//! A very simple library to implement the Firebase real-time database in your code with the best performance
+//! 
+//! # Instalation
+//! Add this to your `Cargo.toml`:
+//! ```toml
+//! [dependencies]
+//! firerust = { version = "1.0.0" }
+//! ```
+//! 
+//! # Examples
+//! A basic example of data fetch:
+//! ```rust
+//! use firerust::FirebaseClient;
+//! use serde_json::Value;
+//! use std::error::Error;
+//!
+//! fn main() -> Result<(), Box<dyn Error>> {
+//!     let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+//!     let reference = client.reference("/");
+//! 
+//!     reference.set(serde_json::json!({
+//!         "message": "Hello, world!",
+//!     }))?;
+//!     println!("{:?}", reference.get::<Value>());
+//! 
+//!     Ok(())
+//! }
+//! ```
+
+
 use connector::{ Connector, Method, EventStream , EventType };
 use std::fmt::{ Display, Formatter };
 use serde::de::DeserializeOwned;
@@ -10,9 +40,11 @@ use std::io::Read;
 use url::Url;
 
 
+/// TLS Connector for Firebase client
 pub mod connector;
 
 
+/// Connects and authenticates client to Firebase
 #[derive(Debug, Clone)]
 pub struct FirebaseClient {
     connector: Connector,
@@ -20,6 +52,19 @@ pub struct FirebaseClient {
 }
 
 impl FirebaseClient {
+
+    /// Creates a new instance of FirebaseClient with the given url
+    /// and connects to the Firebase server
+    /// 
+    /// # Example
+    /// ```rust
+    /// use firerust::FirebaseClient;
+    /// 
+    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    /// ```
+    /// 
+    /// # Errors
+    /// Returns an error if the url is invalid or the connection to the server fails
     pub fn new(url: impl ToString) -> Result<FirebaseClient, Box<dyn Error>> {
         let url = Url::parse(&url.to_string())?;
 
@@ -46,21 +91,43 @@ impl FirebaseClient {
         })
     }
 
+    /// Sets the API key for the client
+    /// 
+    /// # Example
+    /// ```rust
+    /// use firerust::FirebaseClient;
+    /// 
+    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    /// client.auth("ID_TOKEN");
+    /// ```
     pub fn auth(&mut self, api_key: impl ToString) {
         self.api_key = Some(api_key.to_string());
     }
 
+    /// Creates a new reference to the given path
+    /// 
+    /// # Example
+    /// ```rust
+    /// use firerust::FirebaseClient;
+    /// 
+    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    /// let reference = client.reference("/");
+    /// ```
     pub fn reference(&self, path: impl ToString) -> RealtimeReference {
         RealtimeReference::new(self, path.to_string())
     }
 }
 
+
+/// A reference to a Firebase real-time database
 pub struct RealtimeReference {
     client: FirebaseClient,
     path: String,
 }
 
 impl RealtimeReference {
+
+    /// Creates a new instance of RealtimeReference with the given path
     pub fn new(client: &FirebaseClient, path: impl ToString) -> RealtimeReference {
         RealtimeReference {
             client: client.clone(),
@@ -68,10 +135,33 @@ impl RealtimeReference {
         }
     }
 
+    /// Set reference from the child path
+    /// 
+    /// # Example
+    /// ```rust
+    /// use firerust::FirebaseClient;
+    /// 
+    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    /// let reference = client.reference("/");
+    /// let child_reference = reference.child("child");
+    /// ```
     pub fn child(&self, path: impl ToString) -> RealtimeReference {
         RealtimeReference::new(&self.client, format!("{}/{}", self.path, path.to_string()))
     }
 
+    /// Get the value of the reference
+    /// 
+    /// # Example
+    /// ```rust
+    /// use firerust::FirebaseClient;
+    /// use serde_json::Value;
+    /// 
+    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    /// assert_eq!(client.reference("/").get::<Value>().is_ok(), true);
+    /// ```
+    /// 
+    /// # Errors
+    /// Returns an error if the value is not a valid Response
     pub fn get<T>(&self) -> Result<T, Box<dyn Error>> where T: Serialize + DeserializeOwned {
         let response = self.client.connector.request(Method::Get, self.path.clone(), match self.client.api_key {
             Some(ref api_key) => format!("?auth={}", api_key),
@@ -85,6 +175,17 @@ impl RealtimeReference {
         Ok(serde_json::from_str(response.body())?)
     }
 
+    /// Set the value of the reference
+    /// 
+    /// # Example
+    /// ```rust
+    /// use firerust::FirebaseClient;
+    /// 
+    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    /// client.reference("/").set(serde_json::json!({
+    ///    "message": "Hello, world!",
+    /// }))?;
+    /// ```
     pub fn set<T>(&self, data: T) -> Result<(), Box<dyn Error>>  where T: Serialize {
         let data = serde_json::to_string(&data)?;
 
@@ -100,6 +201,17 @@ impl RealtimeReference {
         Ok(())
     }
 
+    /// Set a unique child value of the reference
+    /// 
+    /// # Example
+    /// ```rust
+    /// use firerust::FirebaseClient;
+    /// 
+    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    /// client.reference("/posts").set_unique(serde_json::json!({
+    ///     "message": "Hello, world!",
+    /// }))?;
+    /// ```
     pub fn set_unique<T>(&self, data: T) -> Result<(), Box<dyn Error>>  where T: Serialize {
         let data = serde_json::to_string(&data)?;
 
@@ -115,6 +227,17 @@ impl RealtimeReference {
         Ok(())
     }
 
+    /// Update the value of the reference
+    /// 
+    /// # Example
+    /// ```rust
+    /// use firerust::FirebaseClient;
+    /// 
+    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    /// client.reference("/").update(serde_json::json!({
+    ///     "message": "New hello, world!",
+    /// }))?;
+    /// ```
     pub fn update<T>(&self, data: T) -> Result<(), Box<dyn Error>> where T: Serialize {
         let data = serde_json::to_string(&data)?;
 
@@ -130,6 +253,15 @@ impl RealtimeReference {
         Ok(())
     }
 
+    /// Delete the value of the reference
+    /// 
+    /// # Example
+    /// ```rust
+    /// use firerust::FirebaseClient;
+    /// 
+    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    /// client.reference("/").delete()?;
+    /// ```
     pub fn delete(&self) -> Result<(), Box<dyn Error>> {
         let response = self.client.connector.request(Method::Delete, self.path.clone(), match self.client.api_key {
             Some(ref api_key) => format!("?print=silent&auth={}", api_key),
@@ -143,6 +275,18 @@ impl RealtimeReference {
         Ok(())
     }
 
+    /// Get the value of the reference as a stream
+    /// 
+    /// # Example
+    /// ```rust
+    /// use firerust::FirebaseClient;
+    /// use serde_json::Value;
+    /// 
+    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    /// client.reference("/").on_snapshot(|snapshot: Value| {
+    ///     assert_eq!(snapshot["message"].as_str(), Some("Hello, world!"));
+    ///     Ok(())
+    /// });
     pub fn on_snapshot<T, F>(&self, callback: F) -> Result<JoinHandle<()>, Box<dyn Error>> where 
         T: Send + 'static,
         F: Send + Copy + 'static,
@@ -273,6 +417,7 @@ impl RealtimeReference {
         }))
     }
 
+    #[doc(hidden)]
     pub fn merge_value(a: &mut Value, b: Value) -> Result<(), Box<dyn Error>> {
         match (a.clone(), b.clone()) {
             (Value::Object(mut a), Value::Object(b)) => {
@@ -296,6 +441,7 @@ impl RealtimeReference {
 }
 
 
+/// Firebase client error
 #[derive(Debug)]
 struct FirebaseError {
     message: String

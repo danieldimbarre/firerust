@@ -8,6 +8,9 @@ use serde::Serialize;
 use url::Url;
 
 
+pub mod connector;
+
+
 #[derive(Debug, Clone)]
 pub struct FirebaseClient {
     url: Url,

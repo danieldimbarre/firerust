@@ -86,17 +86,17 @@ impl Connector {
     /// let connector = Connector::new("docs-example.firebaseio.com", 443)?;
     /// connector.request(Method::Get, "/", None, None)?;
     /// ```
-    pub fn request(&self, method: Method, path: impl ToString, params: Option<impl ToString>, data: Option<impl ToString>) -> Result<Response, Box<dyn Error>> {
+    pub fn request(&self, method: Method, path: impl ToString, params: Option<String>, data: Option<String>) -> Result<Response, Box<dyn Error>> {
         let mut stream = match self.stream.lock() {
             Ok(stream) => stream,
             Err(_) => return Err(Box::new(ConnectorError::GatewayTimeout))
         };
 
         stream.write_all(format!("{} {}.json{} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5, max=100\r\nAccept: application/json; charset=utf-8\r\nCache-Control: no-cache{}", method.to_string(), path.to_string(), match params {
-            Some(params) => params.to_string(),
-            None => String::new()
+            Some(params) => params,
+            None => String::from("")
         }, self.domain, match data {
-            Some(data) => format!("\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{}", data.to_string().as_bytes().len(), data.to_string()),
+            Some(data) => format!("\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{}", data.as_bytes().len(), data),
             None => String::from("\r\n\r\n")
         }).as_bytes())?;
         

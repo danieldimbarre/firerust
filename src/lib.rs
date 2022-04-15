@@ -164,8 +164,8 @@ impl RealtimeReference {
     /// Returns an error if the value is not a valid Response
     pub fn get<T>(&self) -> Result<T, Box<dyn Error>> where T: Serialize + DeserializeOwned {
         let response = self.client.connector.request(Method::Get, self.path.clone(), match self.client.api_key {
-            Some(ref api_key) => format!("?auth={}", api_key),
-            None => "".to_string()
+            Some(ref api_key) => Some(format!("?auth={}", api_key)),
+            None => None
         }, None)?;
 
         if response.status().code() != 200 {
@@ -189,10 +189,10 @@ impl RealtimeReference {
     pub fn set<T>(&self, data: T) -> Result<(), Box<dyn Error>>  where T: Serialize {
         let data = serde_json::to_string(&data)?;
 
-        let response = self.client.connector.request(Method::Put, self.path.clone(), match self.client.api_key {
+        let response = self.client.connector.request(Method::Put, self.path.clone(), Some(match self.client.api_key {
             Some(ref api_key) => format!("?print=silent&auth={}", api_key),
             None => "?print=silent".to_string()
-        }, Some(data))?;
+        }), Some(data))?;
 
         if response.status().code() != 204 {
             return Err(Box::new(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message()))));
@@ -215,10 +215,10 @@ impl RealtimeReference {
     pub fn set_unique<T>(&self, data: T) -> Result<(), Box<dyn Error>>  where T: Serialize {
         let data = serde_json::to_string(&data)?;
 
-        let response = self.client.connector.request(Method::Post, self.path.clone(), match self.client.api_key {
+        let response = self.client.connector.request(Method::Post, self.path.clone(), Some(match self.client.api_key {
             Some(ref api_key) => format!("?print=silent&auth={}", api_key),
             None => "?print=silent".to_string()
-        }, Some(data))?;
+        }), Some(data))?;
 
         if response.status().code() != 204 {
             return Err(Box::new(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message()))));
@@ -241,10 +241,10 @@ impl RealtimeReference {
     pub fn update<T>(&self, data: T) -> Result<(), Box<dyn Error>> where T: Serialize {
         let data = serde_json::to_string(&data)?;
 
-        let response = self.client.connector.request(Method::Patch, self.path.clone(), match self.client.api_key {
+        let response = self.client.connector.request(Method::Patch, self.path.clone(), Some(match self.client.api_key {
             Some(ref api_key) => format!("?print=silent&auth={}", api_key),
             None => "?print=silent".to_string()
-        }, Some(data))?;
+        }), Some(data))?;
 
         if response.status().code() != 204 {
             return Err(Box::new(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message()))));
@@ -263,10 +263,10 @@ impl RealtimeReference {
     /// client.reference("/").delete()?;
     /// ```
     pub fn delete(&self) -> Result<(), Box<dyn Error>> {
-        let response = self.client.connector.request(Method::Delete, self.path.clone(), match self.client.api_key {
+        let response = self.client.connector.request(Method::Delete, self.path.clone(), Some(match self.client.api_key {
             Some(ref api_key) => format!("?print=silent&auth={}", api_key),
             None => "?print=silent".to_string()
-        }, None)?;
+        }), None)?;
 
         if response.status().code() != 204 {
             return Err(Box::new(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message()))));

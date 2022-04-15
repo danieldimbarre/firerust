@@ -4,6 +4,9 @@
 //! use firerust::connector::Connector;
 //! 
 //! let connector = Connector::new("docs-example.firebaseio.com", 443)?;
+//! let response = connector.request(Method::Get, "/", None, None)?;
+//! 
+//! drop(connector);
 //! ```
 
 
@@ -83,14 +86,17 @@ impl Connector {
     /// let connector = Connector::new("docs-example.firebaseio.com", 443)?;
     /// connector.request(Method::Get, "/", None, None)?;
     /// ```
-    pub fn request(&self, method: Method, path: String, params: String, data: Option<String>) -> Result<Response, Box<dyn Error>> {
+    pub fn request(&self, method: Method, path: impl ToString, params: Option<impl ToString>, data: Option<impl ToString>) -> Result<Response, Box<dyn Error>> {
         let mut stream = match self.stream.lock() {
             Ok(stream) => stream,
             Err(_) => return Err(Box::new(ConnectorError::GatewayTimeout))
         };
 
-        stream.write_all(format!("{} {}.json{} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5, max=100\r\nAccept: application/json; charset=utf-8\r\nCache-Control: no-cache{}", method.to_string(), path, params, self.domain, match data {
-            Some(data) => format!("\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{}", data.as_bytes().len(), data),
+        stream.write_all(format!("{} {}.json{} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5, max=100\r\nAccept: application/json; charset=utf-8\r\nCache-Control: no-cache{}", method.to_string(), path.to_string(), match params {
+            Some(params) => params.to_string(),
+            None => String::new()
+        }, self.domain, match data {
+            Some(data) => format!("\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{}", data.to_string().as_bytes().len(), data.to_string()),
             None => String::from("\r\n\r\n")
         }).as_bytes())?;
         
@@ -169,8 +175,8 @@ impl Connector {
             }
         }
 
-        let _tmp = String::from_utf8(data)?;
-        let mut response = _tmp.split("\r\n\r\n");
+        let response = String::from_utf8(data)?;
+        let mut response = response.split("\r\n\r\n");
 
         let mut header = match response.next() {
             Some(header) => header.lines(),
@@ -218,6 +224,14 @@ impl Connector {
         }
 
         Ok((Status::new(status_code, status_message), EventStream::try_from(body.to_string())?, stream))
+    }
+}
+
+impl Drop for Connector {
+    fn drop(&mut self) {
+        if let Ok(mut stream) = self.stream.lock() {
+            stream.shutdown().ok();
+        }
     }
 }
 

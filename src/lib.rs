@@ -209,7 +209,7 @@ impl RealtimeReference {
                     _ => path
                 },
                 None => continue
-            }; 
+            };
 
             let snapshot =  match data.get("data") {
                 Some(snap) => snap.clone(),

@@ -1,8 +1,6 @@
 use std::fmt::{ Display, Formatter };
+use connector::{ Connector, Method };
 use serde::de::DeserializeOwned;
-use native_tls::TlsConnector;
-use std::io::{ Write, Read };
-use std::net::TcpStream;
 use std::error::Error;
 use serde::Serialize;
 use url::Url;
@@ -13,8 +11,7 @@ pub mod connector;
 
 #[derive(Debug, Clone)]
 pub struct FirebaseClient {
-    url: Url,
-    connector: TlsConnector,
+    connector: Connector,
     api_key: Option<String>,
 }
 
@@ -22,18 +19,26 @@ impl FirebaseClient {
     pub fn new(url: impl ToString) -> Result<FirebaseClient, Box<dyn Error>> {
         let url = Url::parse(&url.to_string())?;
 
-        if let Some(domain) = url.domain() {
-            if !domain.contains(".firebaseio.com") && !domain.contains(".firebasedatabase.app") {
-                return Err(Box::new(FirebaseError::new("Invalid domain")));
-            }
-        } else {
-            return Err(Box::new(FirebaseError::new("Invalid domain")));
+        let domain = match url.domain() {
+            Some(domain) => {
+                if !domain.contains(".firebaseio.com") && !domain.contains(".firebasedatabase.app") {
+                    return Err(Box::new(FirebaseError::new("Invalid domain")));
+                }
+
+                domain.to_string()
+            },
+            None => return Err(Box::new(FirebaseError::new("Invalid domain")))
         };
 
+        let port = match url.port_or_known_default() {
+            Some(port) => port,
+            None => 443 as u16
+        };
+
+
         Ok(FirebaseClient {
-            url,
             api_key: None,
-            connector: TlsConnector::new()?,
+            connector: Connector::new(domain, port)?
         })
     }
 
@@ -64,87 +69,28 @@ impl RealtimeReference {
     }
 
     pub fn get<T>(&self) -> Result<T, Box<dyn Error>> where T: Serialize + DeserializeOwned {
-        let host = match self.client.url.domain() {
-            Some(host) => host,
-            None => return Err(Box::new(FirebaseError::new("Invalid URL")))
-        };
-
-        let port = match self.client.url.port_or_known_default() {
-            Some(port) => port,
-            None => return Err(Box::new(FirebaseError::new("Invalid URL")))
-        };
-
-        let mut buf = String::new();
-        let stream = TcpStream::connect(format!("{}:{}", host, port))?;
-        let mut stream = self.client.connector.connect(host, stream)?;
-
-        stream.write_all(format!("GET {}.json{} HTTP/1.0\r\nHost: {}\r\nAccept: application/json; charset=utf-8\r\nCache-Control: no-cache\r\n\r\n", self.path, match self.client.api_key {
+        let response = self.client.connector.request(Method::GET, self.path.clone(), match self.client.api_key {
             Some(ref api_key) => format!("?auth={}", api_key),
             None => "".to_string()
-        }, host).as_bytes())?;
-        stream.read_to_string(&mut buf)?;
+        }, None)?;
 
-        let mut response = buf.split("\r\n\r\n");
-        
-        let mut header = match response.next() {
-            Some(header) => header.lines(),
-            None => return Err(Box::new(FirebaseError::new("Invalid response")))
-        };
-
-        let body = match response.next() {
-            Some(body) => body,
-            None => return Err(Box::new(FirebaseError::new("Invalid response")))
-        };
-
-        let status = match header.next() {
-            Some(status) => status.split(" ").collect::<Vec<&str>>(),
-            None => return Err(Box::new(FirebaseError::new("Invalid response")))
-        };
-
-        if status[1] != "200" {
-            return Err(Box::new(FirebaseError::new(format!("{} {}", status[1], status[2]))));
+        if response.status().code() != 200 {
+            return Err(Box::new(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message()))));
         }
 
-        Ok(serde_json::from_str(body)?)
+        Ok(serde_json::from_str(response.body())?)
     }
 
     pub fn set<T>(&self, data: T) -> Result<(), Box<dyn Error>>  where T: Serialize {
         let data = serde_json::to_string(&data)?;
 
-        let host = match self.client.url.domain() {
-            Some(host) => host,
-            None => return Err(Box::new(FirebaseError::new("Invalid URL")))
-        };
+        let response = self.client.connector.request(Method::PUT, self.path.clone(), match self.client.api_key {
+            Some(ref api_key) => format!("??print=silent&auth={}", api_key),
+            None => "?print=silent".to_string()
+        }, Some(data))?;
 
-        let port = match self.client.url.port_or_known_default() {
-            Some(port) => port,
-            None => return Err(Box::new(FirebaseError::new("Invalid URL")))
-        };
-
-        let mut buf = String::new();
-        let stream = TcpStream::connect(format!("{}:{}", host, port))?;
-        let mut stream = self.client.connector.connect(host, stream)?;
-
-        stream.write_all(format!("PUT {}.json?print=silent{} HTTP/1.0\r\nHost: {}\r\nAccept: */*\r\nContent-Length: {}\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n{}", self.path, match self.client.api_key {
-            Some(ref api_key) => format!("&auth={}", api_key),
-            None => "".to_string()
-        }, host, data.as_bytes().len(), data).as_bytes())?;
-        stream.read_to_string(&mut buf)?;
-
-        let mut response = buf.split("\r\n\r\n");
-        
-        let mut header = match response.next() {
-            Some(header) => header.lines(),
-            None => return Err(Box::new(FirebaseError::new("Invalid response")))
-        };
-
-        let status = match header.next() {
-            Some(status) => status.split(" ").collect::<Vec<&str>>(),
-            None => return Err(Box::new(FirebaseError::new("Invalid response")))
-        };
-
-        if status[1] != "204" {
-            return Err(Box::new(FirebaseError::new(format!("{} {}", status[1], status[2]))));
+        if response.status().code() != 204 {
+            return Err(Box::new(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message()))));
         }
 
         Ok(())
@@ -153,40 +99,13 @@ impl RealtimeReference {
     pub fn set_unique<T>(&self, data: T) -> Result<(), Box<dyn Error>>  where T: Serialize {
         let data = serde_json::to_string(&data)?;
 
-        let host = match self.client.url.domain() {
-            Some(host) => host,
-            None => return Err(Box::new(FirebaseError::new("Invalid URL")))
-        };
+        let response = self.client.connector.request(Method::POST, self.path.clone(), match self.client.api_key {
+            Some(ref api_key) => format!("??print=silent&auth={}", api_key),
+            None => "?print=silent".to_string()
+        }, Some(data))?;
 
-        let port = match self.client.url.port_or_known_default() {
-            Some(port) => port,
-            None => return Err(Box::new(FirebaseError::new("Invalid URL")))
-        };
-
-        let mut buf = String::new();
-        let stream = TcpStream::connect(format!("{}:{}", host, port))?;
-        let mut stream = self.client.connector.connect(host, stream)?;
-
-        stream.write_all(format!("POST {}.json?print=silent{} HTTP/1.0\r\nHost: {}\r\nAccept: */*\r\nContent-Length: {}\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n{}", self.path, match self.client.api_key {
-            Some(ref api_key) => format!("&auth={}", api_key),
-            None => "".to_string()
-        }, host, data.as_bytes().len(), data).as_bytes())?;
-        stream.read_to_string(&mut buf)?;
-
-        let mut response = buf.split("\r\n\r\n");
-        
-        let mut header = match response.next() {
-            Some(header) => header.lines(),
-            None => return Err(Box::new(FirebaseError::new("Invalid response")))
-        };
-
-        let status = match header.next() {
-            Some(status) => status.split(" ").collect::<Vec<&str>>(),
-            None => return Err(Box::new(FirebaseError::new("Invalid response")))
-        };
-
-        if status[1] != "204" {
-            return Err(Box::new(FirebaseError::new(format!("{} {}", status[1], status[2]))));
+        if response.status().code() != 204 {
+            return Err(Box::new(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message()))));
         }
 
         Ok(())
@@ -195,80 +114,26 @@ impl RealtimeReference {
     pub fn update<T>(&self, data: T) -> Result<(), Box<dyn Error>> where T: Serialize {
         let data = serde_json::to_string(&data)?;
 
-        let host = match self.client.url.domain() {
-            Some(host) => host,
-            None => return Err(Box::new(FirebaseError::new("Invalid URL")))
-        };
+        let response = self.client.connector.request(Method::PATCH, self.path.clone(), match self.client.api_key {
+            Some(ref api_key) => format!("??print=silent&auth={}", api_key),
+            None => "?print=silent".to_string()
+        }, Some(data))?;
 
-        let port = match self.client.url.port_or_known_default() {
-            Some(port) => port,
-            None => return Err(Box::new(FirebaseError::new("Invalid URL")))
-        };
-
-        let mut buf = String::new();
-        let stream = TcpStream::connect(format!("{}:{}", host, port))?;
-        let mut stream = self.client.connector.connect(host, stream)?;
-
-        stream.write_all(format!("PATCH {}.json?print=silent{} HTTP/1.0\r\nHost: {}\r\nAccept: */*\r\nContent-Length: {}\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n{}", self.path, match self.client.api_key {
-            Some(ref api_key) => format!("&auth={}", api_key),
-            None => "".to_string()
-        }, host, data.as_bytes().len(), data).as_bytes())?;
-        stream.read_to_string(&mut buf)?;
-
-        let mut response = buf.split("\r\n\r\n");
-        
-        let mut header = match response.next() {
-            Some(header) => header.lines(),
-            None => return Err(Box::new(FirebaseError::new("Invalid response")))
-        };
-
-        let status = match header.next() {
-            Some(status) => status.split(" ").collect::<Vec<&str>>(),
-            None => return Err(Box::new(FirebaseError::new("Invalid response")))
-        };
-
-        if status[1] != "204" {
-            return Err(Box::new(FirebaseError::new(format!("{} {}", status[1], status[2]))));
+        if response.status().code() != 204 {
+            return Err(Box::new(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message()))));
         }
 
         Ok(())
     }
 
     pub fn delete(&self) -> Result<(), Box<dyn Error>> {
-        let host = match self.client.url.domain() {
-            Some(host) => host,
-            None => return Err(Box::new(FirebaseError::new("Invalid URL")))
-        };
+        let response = self.client.connector.request(Method::DELETE, self.path.clone(), match self.client.api_key {
+            Some(ref api_key) => format!("??print=silent&auth={}", api_key),
+            None => "?print=silent".to_string()
+        }, None)?;
 
-        let port = match self.client.url.port_or_known_default() {
-            Some(port) => port,
-            None => return Err(Box::new(FirebaseError::new("Invalid URL")))
-        };
-
-        let mut buf = String::new();
-        let stream = TcpStream::connect(format!("{}:{}", host, port))?;
-        let mut stream = self.client.connector.connect(host, stream)?;
-
-        stream.write_all(format!("DELETE {}.json?print=silent{} HTTP/1.0\r\nHost: {}\r\nAccept: */*\r\n\r\n", self.path, match self.client.api_key {
-            Some(ref api_key) => format!("&auth={}", api_key),
-            None => "".to_string()
-        }, host).as_bytes())?;
-        stream.read_to_string(&mut buf)?;
-
-        let mut response = buf.split("\r\n\r\n");
-        
-        let mut header = match response.next() {
-            Some(header) => header.lines(),
-            None => return Err(Box::new(FirebaseError::new("Invalid response")))
-        };
-
-        let status = match header.next() {
-            Some(status) => status.split(" ").collect::<Vec<&str>>(),
-            None => return Err(Box::new(FirebaseError::new("Invalid response")))
-        };
-
-        if status[1] != "204" {
-            return Err(Box::new(FirebaseError::new(format!("{} {}", status[1], status[2]))));
+        if response.status().code() != 204 {
+            return Err(Box::new(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message()))));
         }
 
         Ok(())

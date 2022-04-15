@@ -6,7 +6,7 @@ use std::net::TcpStream;
 use std::error::Error;
 
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Connector {
     host: String,
     domain: String,
@@ -60,7 +60,7 @@ impl Connector {
         };
 
         stream.write_all(format!("{} {}.json{} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5, max=100\r\nAccept: application/json; charset=utf-8\r\nCache-Control: no-cache{}", method.to_string(), path, params, self.domain, match data {
-            Some(data) => format!("\r\nContent-Length: {}\r\n\r\n{}", data.as_bytes().len(), data),
+            Some(data) => format!("\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{}", data.as_bytes().len(), data),
             None => String::from("\r\n\r\n")
         }).as_bytes())?;
         

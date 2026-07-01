@@ -72,8 +72,27 @@ impl Connector {
         Ok(())
     }
     
-    /// Send data to the server
+    /// Send data to the server (with auto-reconnect on IO error)
     pub fn request(&self, method: Method, path: &str, params: Option<&str>, data: Option<&str>, api_key: Option<&str>) -> Result<Response, ConnectorError> {
+        let mut retries = 1;
+        loop {
+            match self.request_inner(method.clone(), path, params, data, api_key) {
+                Ok(res) => return Ok(res),
+                Err(e) => {
+                    if let ConnectorError::Io(_) = e {
+                        if retries > 0 {
+                            retries -= 1;
+                            let _ = self.reconnect();
+                            continue;
+                        }
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    fn request_inner(&self, method: Method, path: &str, params: Option<&str>, data: Option<&str>, api_key: Option<&str>) -> Result<Response, ConnectorError> {
         let mut stream = match self.stream.lock() {
             Ok(stream) => stream,
             Err(_) => return Err(ConnectorError::GatewayTimeout)
@@ -448,7 +467,7 @@ impl TryFrom<String> for EventStream {
 }
 
 
-/// Database request methods
+#[derive(Clone, Debug)]
 pub enum Method {
     Get,
     Put,

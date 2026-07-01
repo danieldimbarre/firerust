@@ -29,21 +29,23 @@ pub struct Connector {
 impl Connector {
 
     /// Creates a new connector
-    pub fn new(domain: impl ToString, port: impl ToString) -> Result<Connector, Box<dyn Error>> {
+    pub fn new(domain: impl ToString, port: u16) -> Result<Connector, Box<dyn Error>> {
+        let domain_str = domain.to_string();
         let tlsconnector = TlsConnector::new()?;
+        let host = format!("{}:{}", domain_str, port);
 
-        let stream = match TcpStream::connect(domain.to_string() + ":" + &port.to_string()) {
+        let stream = match TcpStream::connect(&host) {
             Ok(stream) => {
                 stream.set_nodelay(true)?;
-                tlsconnector.connect(&domain.to_string(), stream)?
+                tlsconnector.connect(&domain_str, stream)?
             },
             Err(_) => return Err(Box::new(ConnectorError::GatewayTimeout))
         };
 
         Ok(Connector {
-            domain: domain.to_string(),
+            domain: domain_str,
             stream: Arc::new(Mutex::new(stream)),
-            host: domain.to_string() + ":" + &port.to_string()
+            host
         })
     }
 
@@ -59,7 +61,7 @@ impl Connector {
     pub fn reconnect(&self) -> Result<(), Box<dyn Error>> {
         let tlsconnector = TlsConnector::new()?;
 
-        let stream = match TcpStream::connect(self.host.clone()) {
+        let stream = match TcpStream::connect(&self.host) {
             Ok(stream) => {
                 stream.set_nodelay(true)?;
                 tlsconnector.connect(&self.domain, stream)?
@@ -380,15 +382,16 @@ pub enum Method {
     Delete
 }
 
-impl ToString for Method {
-    fn to_string(&self) -> String {
-        match self {
+impl Display for Method {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
             Method::Get => "GET",
             Method::Put => "PUT",
             Method::Post => "POST",
             Method::Patch => "PATCH",
             Method::Delete => "DELETE"
-        }.to_string()
+        };
+        write!(f, "{}", s)
     }
 }
 
@@ -411,12 +414,4 @@ impl Display for ConnectorError {
     }
 }
 
-impl Error for ConnectorError {
-    fn description(&self) -> &str {
-        match self {
-            ConnectorError::LockError => "Lock error",
-            ConnectorError::GatewayTimeout => "Gateway Timeout",
-            ConnectorError::InvalidResponse => "Invalid response",
-        }
-    }
-}
+impl Error for ConnectorError {}

@@ -81,7 +81,7 @@ impl FirebaseClient {
 
         let port = match url.port_or_known_default() {
             Some(port) => port,
-            None => 443 as u16
+            None => 443
         };
 
 
@@ -113,24 +113,24 @@ impl FirebaseClient {
     /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
     /// let reference = client.reference("/");
     /// ```
-    pub fn reference(&self, path: impl ToString) -> RealtimeReference {
+    pub fn reference(&self, path: impl ToString) -> RealtimeReference<'_> {
         RealtimeReference::new(self, path.to_string())
     }
 }
 
 
 /// A reference to a Firebase real-time database
-pub struct RealtimeReference {
-    client: FirebaseClient,
+pub struct RealtimeReference<'a> {
+    client: &'a FirebaseClient,
     path: String,
 }
 
-impl RealtimeReference {
+impl<'a> RealtimeReference<'a> {
 
     /// Creates a new instance of RealtimeReference with the given path
-    pub fn new(client: &FirebaseClient, path: impl ToString) -> RealtimeReference {
+    pub fn new(client: &'a FirebaseClient, path: impl ToString) -> RealtimeReference<'a> {
         RealtimeReference {
-            client: client.clone(),
+            client,
             path: path.to_string(),
         }
     }
@@ -145,8 +145,8 @@ impl RealtimeReference {
     /// let reference = client.reference("/");
     /// let child_reference = reference.child("child");
     /// ```
-    pub fn child(&self, path: impl ToString) -> RealtimeReference {
-        RealtimeReference::new(&self.client, format!("{}/{}", self.path, path.to_string()))
+    pub fn child(&self, path: impl ToString) -> RealtimeReference<'a> {
+        RealtimeReference::new(self.client, format!("{}/{}", self.path, path.to_string()))
     }
 
     /// Get the value of the reference
@@ -452,11 +452,7 @@ impl FirebaseError {
     }
 }
 
-impl Error for FirebaseError {
-    fn description(&self) -> &str {
-        &self.message
-    }
-}
+impl Error for FirebaseError {}
 
 impl Display for FirebaseError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {

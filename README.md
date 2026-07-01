@@ -16,7 +16,8 @@ A very simple library to implement the Firebase real-time database in your code 
 Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
-firerust = { version = "1" }
+firerust = { version = "2" }
+tokio = { version = "1", features = ["full"] }
 ```
 
 # Usage
@@ -27,7 +28,7 @@ use firerust::FirebaseClient;
 
 Initialize a Firebase client without auth
 ```rust
-FirebaseClient::new("https://<DATABASE_NAME>.firebaseio.com/")?;
+let client = FirebaseClient::new("https://<DATABASE_NAME>.firebaseio.com/")?;
 ```
 
 Initialize a Firebase client with auth
@@ -43,48 +44,64 @@ A basic example of data fetch:
 use firerust::FirebaseClient;
 use serde_json::Value;
 
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    let reference = client.reference("/");
 
-let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
-let reference = client.reference("/");
-
-println!("{:?}", reference.get::<Value>());
+    println!("{:?}", reference.get::<Value>().await?);
+    
+    Ok(())
+}
 ```
 
 A basic example of data set:
 ```rust
 use firerust::FirebaseClient;
 
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    let reference = client.reference("/");
 
-let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
-let reference = client.reference("/");
+    reference.set(serde_json::json!({
+        "message": "Setting data"
+    })).await?;
 
-reference.set(serde_json::json!({
-    "message": "Setting data"
-}))?;
+    Ok(())
+}
 ```
 
 A basic example of data update:
 ```rust
 use firerust::FirebaseClient;
 
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    let reference = client.reference("/");
 
-let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
-let reference = client.reference("/");
+    reference.update(serde_json::json!({
+        "message": "Updating data"
+    })).await?;
 
-reference.update(serde_json::json!({
-    "message": "Updating data"
-}))?;
+    Ok(())
+}
 ```
 
 A basic example of data deletion:
 ```rust
 use firerust::FirebaseClient;
 
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    let reference = client.reference("/");
 
-let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
-let reference = client.reference("/");
+    reference.delete().await?;
 
-reference.delete()?;
+    Ok(())
+}
 ```
 
 A snapshot event example:
@@ -92,13 +109,16 @@ A snapshot event example:
 use firerust::FirebaseClient;
 use serde_json::Value;
 
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    let reference = client.reference("/");
 
-let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
-let reference = client.reference("/");
-
-reference.on_snapshot(| data: Value | {
-    println!("{:?}", data);
+    reference.on_snapshot(| data: Value | {
+        println!("{:?}", data);
+        Ok(())
+    }, |_| {}).await?.await.unwrap();
 
     Ok(())
-})?;
+}
 ```

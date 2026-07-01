@@ -1,0 +1,22 @@
+name: Publish to crates.io
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        
+      - name: Verify package
+        run: cargo check
+        
+      - name: Publish to crates.io
+        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}

@@ -293,7 +293,7 @@ impl RealtimeReference {
         T: Serialize + DeserializeOwned,
         F: FnOnce(T) -> Result<(), Box<dyn Error>>
     {
-        let (status, event_stream, mut stream) = self.client.connector.event_stream(self.path.clone(), match self.client.api_key {
+        let (status, event_stream, mut stream, initial_buffer) = self.client.connector.event_stream(self.path.clone(), match self.client.api_key {
             Some(ref api_key) => format!("?auth={}", api_key),
             None => "".to_string()
         })?;
@@ -317,103 +317,102 @@ impl RealtimeReference {
             Err(_) => return Err(Box::new(FirebaseError::new("Invalid data")))
         };
 
-        Ok(std::thread::spawn(move || loop {
-            let mut data = Vec::new();
-
+        Ok(std::thread::spawn(move || {
+            let mut buffer = initial_buffer;
+            
             loop {
+                while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
+                    let event_data = buffer[..pos].to_vec();
+                    buffer.drain(..pos + 2);
+
+                    let event_stream_str = match String::from_utf8(event_data) {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
+                    
+                    let event_stream = match EventStream::try_from(event_stream_str) {
+                        Ok(es) => es,
+                        Err(_) => continue,
+                    };
+
+                    let data = match serde_json::from_str::<Value>(event_stream.data()) {
+                        Ok(data) => data,
+                        Err(_) => continue
+                    };
+
+                    let path = match data["path"].as_str() {
+                        Some(path) => match path {
+                            "/" => "",
+                            _ => path
+                        },
+                        None => continue
+                    };
+
+                    let snapshot = match data.get("data") {
+                        Some(snap) => snap.clone(),
+                        None => continue
+                    };
+
+                    match event_stream.event() {
+                        EventType::Put => {
+                            let mut snap = match snap.lock() {
+                                Ok(snap) => snap,
+                                Err(_) => continue
+                            };
+
+                            let pointer = match snap.pointer_mut(&path) {
+                                Some(pointer) => pointer,
+                                None => continue
+                            };
+
+                            *pointer = snapshot;
+
+                            let data = match serde_json::from_value::<T>(snap.clone()) {
+                                Ok(data) => data,
+                                Err(_) => continue,
+                            };
+
+                            let _ = callback(data);
+                        },
+                        EventType::Patch => {
+                            let mut snap = match snap.lock() {
+                                Ok(snap) => snap,
+                                Err(_) => continue
+                            };
+
+                            let pointer = match snap.pointer_mut(&path) {
+                                Some(pointer) => pointer,
+                                None => continue
+                            };
+
+                            let _ = RealtimeReference::merge_value(pointer, snapshot);
+
+                            let data = match serde_json::from_value::<T>(snap.clone()) {
+                                Ok(data) => data,
+                                Err(_) => continue
+                            };
+
+                            let _ = callback(data);
+                        },                
+                        EventType::Cancel => return,
+                        EventType::AuthRevoked => return,
+                        EventType::KeepAlive => continue,
+                        EventType::Unknown(_) => continue,
+                    };
+                }
+
                 let mut buf = [0; 1024];
                 let len = match stream.read(&mut buf) {
                     Ok(len) => len,
                     Err(_) => break
                 };
 
-                data.extend_from_slice(&buf[..len]);
-
-                if len < 1024 {
+                if len == 0 {
                     break;
                 }
+
+                buffer.extend_from_slice(&buf[..len]);
             }
-
-            let event_stream = match String::from_utf8(data) {
-                Ok(event_stream) => match EventStream::try_from(event_stream) {
-                    Ok(event_stream) => event_stream,
-                    Err(_) => continue
-                },
-                Err(_) => continue
-            };
-
-            let data = match serde_json::from_str::<Value>(event_stream.data()) {
-                Ok(data) => data,
-                Err(_) => continue
-            };
-
-            let path = match data["path"].as_str() {
-                Some(path) => match path {
-                    "/" => "",
-                    _ => path
-                },
-                None => continue
-            };
-
-            let snapshot =  match data.get("data") {
-                Some(snap) => snap.clone(),
-                None => continue
-            };
-
-            match event_stream.event() {
-                EventType::Put => {
-                    let mut snap = match snap.lock() {
-                        Ok(snap) => snap,
-                        Err(_) => continue
-                    };
-
-                    let pointer = match snap.pointer_mut(&path) {
-                        Some(pointer) => pointer,
-                        None => continue
-                    };
-
-                    *pointer = snapshot;
-
-                    let data = match serde_json::from_value::<T>(snap.clone()) {
-                        Ok(data) => data,
-                        Err(_) => continue,
-                    };
-
-                    match callback(data) {
-                        Ok(_) => {},
-                        Err(_) => {}
-                    };
-                },
-                EventType::Patch => {
-                    let mut snap = match snap.lock() {
-                        Ok(snap) => snap,
-                        Err(_) => continue
-                    };
-
-                    let pointer = match snap.pointer_mut(&path) {
-                        Some(pointer) => pointer,
-                        None => continue
-                    };
-
-                    match RealtimeReference::merge_value(pointer, snapshot) {
-                        Ok(_) => {},
-                        Err(_) => continue
-                    };
-
-                    let data = match serde_json::from_value::<T>(snap.clone()) {
-                        Ok(data) => data,
-                        Err(_) => continue
-                    };
-
-                    match callback(data) {
-                        Ok(_) => {},
-                        Err(_) => {}
-                    };
-                },                
-                EventType::Cancel => return,
-                EventType::AuthRevoked => return,
-                EventType::KeepAlive => continue,
-            };
         }))
     }
 

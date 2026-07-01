@@ -96,59 +96,67 @@ impl Connector {
             Some(params) => params,
             None => String::from("")
         }, self.domain, match data {
-            Some(data) => format!("\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{}", data.as_bytes().len(), data),
+            Some(data) => format!("\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}", data.as_bytes().len(), data),
             None => String::from("\r\n\r\n")
         }).as_bytes())?;
         
-        let mut data = Vec::new();
+        let mut headers_data = Vec::new();
+        let mut headers_end = 0;
 
         loop {
             let buffer = &mut [0; 1024];
             let size = stream.read(buffer)?;
+            if size == 0 {
+                break;
+            }
+            headers_data.extend_from_slice(&buffer[0..size]);
 
-            data.extend_from_slice(&buffer[0..size]);
-
-            if size < 1024 {
+            if let Some(pos) = headers_data.windows(4).position(|w| w == b"\r\n\r\n") {
+                headers_end = pos + 4;
                 break;
             }
         }
 
-        let response = String::from_utf8(data)?;
-        let mut response = response.split("\r\n\r\n");
+        if headers_end == 0 {
+            return Err(Box::new(ConnectorError::InvalidResponse));
+        }
 
-        let mut header = match response.next() {
-            Some(header) => header.lines(),
+        let header_str = String::from_utf8_lossy(&headers_data[..headers_end]).to_string();
+        let mut content_length = 0;
+
+        let mut header_lines = header_str.lines();
+        let status_line = match header_lines.next() {
+            Some(line) => line.split(' ').collect::<Vec<&str>>(),
             None => return Err(Box::new(ConnectorError::InvalidResponse))
         };
 
-        let body = match response.next() {
-            Some(body) => body,
-            None => return Err(Box::new(ConnectorError::InvalidResponse))
-        };
+        let status_code = status_line.get(1).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
+        let status_message = if status_line.len() > 2 { status_line[2..].join(" ") } else { String::new() };
 
-        let status_line = match header.next() {
-            Some(status_line) => status_line.split(" ").collect::<Vec<&str>>(),
-            None => return Err(Box::new(ConnectorError::InvalidResponse))
-        };
+        for line in header_lines {
+            if line.to_lowercase().starts_with("content-length:") {
+                if let Some(len_str) = line.split(':').nth(1) {
+                    content_length = len_str.trim().parse::<usize>().unwrap_or(0);
+                }
+            }
+        }
 
-        let status_code = match status_line.get(1) {
-            Some(status_code) => match status_code.parse::<u16>() {
-                Ok(status_code) => status_code,
-                Err(_) => return Err(Box::new(ConnectorError::InvalidResponse))
-            },
-            None => return Err(Box::new(ConnectorError::InvalidResponse))
-        };
+        let mut body_data = headers_data[headers_end..].to_vec();
+        while body_data.len() < content_length {
+            let buffer = &mut [0; 1024];
+            let size = stream.read(buffer)?;
+            if size == 0 {
+                break;
+            }
+            body_data.extend_from_slice(&buffer[0..size]);
+        }
 
-        let status_message = match status_line.get(2) {
-            Some(status_message) => status_message.to_string(),
-            None => return Err(Box::new(ConnectorError::InvalidResponse))
-        };
-
+        let body = String::from_utf8(body_data)?;
         Ok(Response::new(body, Status::new(status_code, status_message)))
     }
 
     /// Connect to the server with event stream
-    pub fn event_stream(&self, path: String, params: String) -> Result<(Status, EventStream, TlsStream<TcpStream>), Box<dyn Error>> {
+    pub fn event_stream(&self, path: String, params: String) -> Result<(Status, EventStream, TlsStream<TcpStream>, Vec<u8>), Box<dyn Error>> {
         let tlsconnector = TlsConnector::new()?;
 
         let mut stream = match TcpStream::connect(self.host.clone()) {
@@ -162,68 +170,55 @@ impl Connector {
         stream.write_all(format!("GET {}.json{} HTTP/1.1\r\nHost: {}\r\nAccept: text/event-stream\r\n\r\n", path, params, self.domain).as_bytes())?;
         stream.flush()?;
 
-        let mut data = Vec::new();
+        let mut headers_data = Vec::new();
+        let mut headers_end = 0;
 
         loop {
-            let buffer = &mut [0; 2048];
+            let buffer = &mut [0; 1024];
             let size = stream.read(buffer)?;
+            if size == 0 {
+                break;
+            }
+            headers_data.extend_from_slice(&buffer[0..size]);
 
-            data.extend_from_slice(&buffer[0..size]);
-
-            if size < 1024 {
+            if let Some(pos) = headers_data.windows(4).position(|w| w == b"\r\n\r\n") {
+                headers_end = pos + 4;
                 break;
             }
         }
 
-        let response = String::from_utf8(data)?;
-        let mut response = response.split("\r\n\r\n");
-
-        let mut header = match response.next() {
-            Some(header) => header.lines(),
-            None => return Err(Box::new(ConnectorError::InvalidResponse))
-        };
-        
-        let mut body = match response.next() {
-            Some(body) => body.to_string(),
-            None => return Err(Box::new(ConnectorError::InvalidResponse))
-        };
-
-        let status_line = match header.next() {
-            Some(status_line) => status_line.split(" ").collect::<Vec<&str>>(),
-            None => return Err(Box::new(ConnectorError::InvalidResponse))
-        };
-
-        let status_code = match status_line.get(1) {
-            Some(status_code) => match status_code.parse::<u16>() {
-                Ok(status_code) => status_code,
-                Err(_) => return Err(Box::new(ConnectorError::InvalidResponse))
-            },
-            None => return Err(Box::new(ConnectorError::InvalidResponse))
-        };
-
-        let status_message = match status_line.get(2) {
-            Some(status_message) => status_message.to_string(),
-            None => return Err(Box::new(ConnectorError::InvalidResponse))
-        };
-
-        if body == "" {
-            loop {
-                let buffer = &mut [0; 2048];
-                let size = stream.read(buffer)?;
-                let data = match String::from_utf8(buffer[0..size].to_vec()) {
-                    Ok(data) => data,
-                    Err(_) => return Err(Box::new(ConnectorError::GatewayTimeout))
-                };
-
-                body.push_str(&data);
-    
-                if size < 1024 {
-                    break;
-                }
-            }
+        if headers_end == 0 {
+            return Err(Box::new(ConnectorError::InvalidResponse));
         }
 
-        Ok((Status::new(status_code, status_message), EventStream::try_from(body.to_string())?, stream))
+        let header_str = String::from_utf8_lossy(&headers_data[..headers_end]).to_string();
+
+        let mut header_lines = header_str.lines();
+        let status_line = match header_lines.next() {
+            Some(line) => line.split(' ').collect::<Vec<&str>>(),
+            None => return Err(Box::new(ConnectorError::InvalidResponse))
+        };
+
+        let status_code = status_line.get(1).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
+        let status_message = if status_line.len() > 2 { status_line[2..].join(" ") } else { String::new() };
+
+        let mut body_data = headers_data[headers_end..].to_vec();
+        while !body_data.windows(2).any(|w| w == b"\n\n") {
+            let buffer = &mut [0; 1024];
+            let size = stream.read(buffer)?;
+            if size == 0 { break; }
+            body_data.extend_from_slice(&buffer[0..size]);
+        }
+
+        let pos = body_data.windows(2).position(|w| w == b"\n\n").unwrap_or(body_data.len());
+        let body_str = String::from_utf8_lossy(&body_data[..pos]).to_string();
+        let remaining = if pos + 2 < body_data.len() {
+            body_data[pos+2..].to_vec()
+        } else {
+            Vec::new()
+        };
+
+        Ok((Status::new(status_code, status_message), EventStream::try_from(body_str)?, stream, remaining))
     }
 }
 
@@ -304,7 +299,8 @@ pub enum EventType {
     Patch,
     Cancel,
     KeepAlive,
-    AuthRevoked
+    AuthRevoked,
+    Unknown(String)
 }
 
 impl From<String> for EventType {
@@ -315,7 +311,7 @@ impl From<String> for EventType {
             "cancel" => EventType::Cancel,
             "keep-alive" => EventType::KeepAlive,
             "auth_revoked" => EventType::AuthRevoked,
-            _ => EventType::Put
+            _ => EventType::Unknown(event)
         }
     }
 }

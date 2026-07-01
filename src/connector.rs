@@ -1,328 +1,105 @@
 //! # Example
 //! 
 //! ```rust,no_run
-//! use firerust::connector::Connector;
+//! use firerust::connector::{Connector, Method};
 //! 
-/// let connector = Connector::new("docs-example.firebaseio.com", 443)?;
-/// let response = connector.request(Method::Get, "/", None, None)?;
-/// 
-/// drop(connector);
-/// ```
+//! #[tokio::main]
+//! async fn main() {
+//!     let connector = Connector::new("docs-example.firebaseio.com", 443).unwrap();
+//!     let response = connector.request(Method::Get, "/", None, None, None).await.unwrap();
+//! }
+//! ```
 
 
-use native_tls::{ TlsConnector, TlsStream };
-use url::Url;
+use reqwest::{Client, ClientBuilder, Response as ReqwestResponse};
 use std::fmt::{ Display, Formatter };
-use std::sync::{ Arc, Mutex };
-use std::io::{ Write, Read };
-use std::net::TcpStream;
 use std::error::Error;
-
 
 /// A connector to a Firebase server.
 #[derive(Clone, Debug)]
 pub struct Connector {
-    host: String,
-    domain: String,
-    stream: Arc<Mutex<TlsStream<TcpStream>>>
+    client: Client,
+    base_url: String,
 }
 
 impl Connector {
 
     /// Creates a new connector
     pub fn new(domain: impl ToString, port: u16) -> Result<Connector, ConnectorError> {
-        let domain_str = domain.to_string();
-        let tlsconnector = TlsConnector::new()?;
-        let host = format!("{}:{}", domain_str, port);
+        let mut domain_str = domain.to_string();
+        if domain_str.ends_with('/') {
+            domain_str.pop();
+        }
+        
+        let base_url = format!("https://{}:{}", domain_str, port);
 
-        let stream = match TcpStream::connect(&host) {
-            Ok(stream) => {
-                stream.set_nodelay(true)?;
-                tlsconnector.connect(&domain_str, stream)?
-            },
-            Err(_) => return Err(ConnectorError::GatewayTimeout)
-        };
+        // Firebase has high keep-alive limits, reqwest pools automatically
+        let client = ClientBuilder::new()
+            .tcp_nodelay(true)
+            .build()
+            .map_err(|e| ConnectorError::Reqwest(e))?;
 
         Ok(Connector {
-            domain: domain_str,
-            stream: Arc::new(Mutex::new(stream)),
-            host
+            client,
+            base_url
         })
     }
 
-    /// Reconnect the stream
-    pub fn reconnect(&self) -> Result<(), ConnectorError> {
-        let tlsconnector = TlsConnector::new()?;
-
-        let stream = match TcpStream::connect(&self.host) {
-            Ok(stream) => {
-                stream.set_nodelay(true)?;
-                tlsconnector.connect(&self.domain, stream)?
-            },
-            Err(_) => return Err(ConnectorError::GatewayTimeout)
-        };
-
-        match self.stream.lock() {
-            Ok(mut old_stream) => {
-                *old_stream = stream;
-            },
-            Err(_) => return Err(ConnectorError::LockError)
-        };
-        
-        Ok(())
-    }
-    
-    /// Send data to the server (with auto-reconnect on IO error)
-    pub fn request(&self, method: Method, path: &str, params: Option<&str>, data: Option<&str>, api_key: Option<&str>) -> Result<Response, ConnectorError> {
-        let mut retries = 1;
-        loop {
-            match self.request_inner(method.clone(), path, params, data, api_key) {
-                Ok(res) => return Ok(res),
-                Err(e) => {
-                    if let ConnectorError::Io(_) = e {
-                        if retries > 0 {
-                            retries -= 1;
-                            let _ = self.reconnect();
-                            continue;
-                        }
-                    }
-                    return Err(e);
-                }
-            }
+    fn build_url(&self, path: &str, params: Option<&str>) -> String {
+        let mut p = path;
+        if p.starts_with('/') {
+            p = &p[1..];
         }
-    }
-
-    fn request_inner(&self, method: Method, path: &str, params: Option<&str>, data: Option<&str>, api_key: Option<&str>) -> Result<Response, ConnectorError> {
-        let mut stream = match self.stream.lock() {
-            Ok(stream) => stream,
-            Err(_) => return Err(ConnectorError::GatewayTimeout)
-        };
-
-        let auth_header = match api_key {
-            Some(key) => format!("\r\nAuthorization: Bearer {}", key),
-            None => String::new()
-        };
-
+        if p.ends_with('/') {
+            p = &p[..p.len()-1];
+        }
+        
         let params_str = params.unwrap_or("");
-        let data_header = match data {
-            Some(d) => format!("\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}", d.len(), d),
-            None => String::from("\r\n\r\n")
-        };
-
-        let req = format!("{} {}.json{} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nAccept: application/json; charset=utf-8\r\nCache-Control: no-cache{}{}", method, path, params_str, self.domain, auth_header, data_header);
-        stream.write_all(req.as_bytes())?;
         
-        let mut headers_data = Vec::new();
-        let mut headers_end = 0;
+        format!("{}/{}.json{}", self.base_url, p, params_str)
+    }
 
-        loop {
-            let buffer = &mut [0; 8192];
-            let size = stream.read(buffer)?;
-            if size == 0 {
-                break;
-            }
-            headers_data.extend_from_slice(&buffer[0..size]);
-
-            if let Some(pos) = headers_data.windows(4).position(|w| w == b"\r\n\r\n") {
-                headers_end = pos + 4;
-                break;
-            }
-        }
-
-        if headers_end == 0 {
-            return Err(ConnectorError::InvalidResponse);
-        }
-
-        let header_str = String::from_utf8_lossy(&headers_data[..headers_end]).to_string();
-        let mut content_length = 0;
-        let mut is_chunked = false;
-
-        let mut header_lines = header_str.lines();
-        let status_line = match header_lines.next() {
-            Some(line) => line.split(' ').collect::<Vec<&str>>(),
-            None => return Err(ConnectorError::InvalidResponse)
+    /// Send data to the server
+    pub async fn request(&self, method: Method, path: &str, params: Option<&str>, data: Option<&str>, api_key: Option<&str>) -> Result<Response, ConnectorError> {
+        let url = self.build_url(path, params);
+        
+        let mut builder = match method {
+            Method::Get => self.client.get(&url),
+            Method::Put => self.client.put(&url),
+            Method::Post => self.client.post(&url),
+            Method::Patch => self.client.patch(&url),
+            Method::Delete => self.client.delete(&url),
         };
 
-        let status_code = status_line.get(1).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
-        let status_message = if status_line.len() > 2 { status_line[2..].join(" ") } else { String::new() };
-
-        for line in header_lines {
-            let lower = line.to_lowercase();
-            if lower.starts_with("content-length:") {
-                if let Some(len_str) = line.split(':').nth(1) {
-                    content_length = len_str.trim().parse::<usize>().unwrap_or(0);
-                }
-            } else if lower.starts_with("transfer-encoding:") && lower.contains("chunked") {
-                is_chunked = true;
-            }
+        if let Some(key) = api_key {
+            builder = builder.bearer_auth(key);
         }
 
-        let mut body_data = headers_data[headers_end..].to_vec();
-
-        if is_chunked {
-            let mut final_body = Vec::new();
-            loop {
-                while !body_data.windows(2).any(|w| w == b"\r\n") {
-                    let buffer = &mut [0; 8192];
-                    let size = stream.read(buffer)?;
-                    if size == 0 { break; }
-                    body_data.extend_from_slice(&buffer[0..size]);
-                }
-                
-                let pos = match body_data.windows(2).position(|w| w == b"\r\n") {
-                    Some(p) => p,
-                    None => break
-                };
-                
-                let chunk_size_str = String::from_utf8_lossy(&body_data[..pos]).trim().to_string();
-                let chunk_size = usize::from_str_radix(&chunk_size_str, 16).unwrap_or(0);
-                
-                body_data = body_data[pos+2..].to_vec();
-                
-                if chunk_size == 0 {
-                    break;
-                }
-                
-                while body_data.len() < chunk_size + 2 {
-                    let buffer = &mut [0; 8192];
-                    let size = stream.read(buffer)?;
-                    if size == 0 { break; }
-                    body_data.extend_from_slice(&buffer[0..size]);
-                }
-                
-                final_body.extend_from_slice(&body_data[..chunk_size]);
-                body_data = body_data[chunk_size+2..].to_vec();
-            }
-            body_data = final_body;
-        } else {
-            while body_data.len() < content_length {
-                let buffer = &mut [0; 8192];
-                let size = stream.read(buffer)?;
-                if size == 0 {
-                    break;
-                }
-                body_data.extend_from_slice(&buffer[0..size]);
-            }
+        if let Some(body_data) = data {
+            builder = builder.header("Content-Type", "application/json")
+                             .body(body_data.to_string());
         }
 
-        let body = String::from_utf8_lossy(&body_data).to_string();
-        Ok(Response::new(body, Status::new(status_code, status_message)))
+        let res = builder.send().await?;
+        let status_code = res.status().as_u16();
+        let status_msg = res.status().canonical_reason().unwrap_or("Unknown").to_string();
+        let body = res.text().await?;
+
+        Ok(Response::new(body, Status::new(status_code, status_msg)))
     }
 
     /// Connect to the server with event stream
-    pub fn event_stream(&self, path: &str, params: Option<&str>, api_key: Option<&str>) -> Result<(Status, EventStream, TlsStream<TcpStream>, Vec<u8>), ConnectorError> {
-        let tlsconnector = TlsConnector::new()?;
-
-        let mut stream = match TcpStream::connect(&self.host) {
-            Ok(stream) => {
-                stream.set_nodelay(true)?;
-                tlsconnector.connect(&self.domain, stream)?
-            },
-            Err(_) => return Err(ConnectorError::GatewayTimeout)
-        };
-
-        let auth_header = match api_key {
-            Some(key) => format!("\r\nAuthorization: Bearer {}", key),
-            None => String::new()
-        };
-        let params_str = params.unwrap_or("");
-
-        let req = format!("GET {}.json{} HTTP/1.1\r\nHost: {}\r\nAccept: text/event-stream{}\r\n\r\n", path, params_str, self.domain, auth_header);
-        stream.write_all(req.as_bytes())?;
-        stream.flush()?;
-
-        let mut headers_data = Vec::new();
-        let mut headers_end = 0;
-
-        loop {
-            let buffer = &mut [0; 8192];
-            let size = stream.read(buffer)?;
-            if size == 0 {
-                break;
-            }
-            headers_data.extend_from_slice(&buffer[0..size]);
-
-            if let Some(pos) = headers_data.windows(4).position(|w| w == b"\r\n\r\n") {
-                headers_end = pos + 4;
-                break;
-            }
-        }
-
-        if headers_end == 0 {
-            return Err(ConnectorError::InvalidResponse);
-        }
-
-        let header_str = String::from_utf8_lossy(&headers_data[..headers_end]).to_string();
-        let mut header_lines = header_str.lines();
+    pub async fn event_stream(&self, path: &str, params: Option<&str>, api_key: Option<&str>) -> Result<ReqwestResponse, ConnectorError> {
+        let url = self.build_url(path, params);
         
-        let status_line = match header_lines.next() {
-            Some(line) => line.split(' ').collect::<Vec<&str>>(),
-            None => return Err(ConnectorError::InvalidResponse)
-        };
+        let mut builder = self.client.get(&url).header("Accept", "text/event-stream");
 
-        let status_code = status_line.get(1).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
-        let status_message = if status_line.len() > 2 { status_line[2..].join(" ") } else { String::new() };
-
-        if status_code == 307 || status_code == 301 || status_code == 302 {
-            let location = header_lines.find(|l| l.to_lowercase().starts_with("location:"))
-                .and_then(|l| l.split(':').nth(1))
-                .map(|s| s.trim());
-            
-            if let Some(loc) = location {
-                if let Ok(parsed_url) = Url::parse(loc) {
-                    if let Some(domain) = parsed_url.host_str() {
-                        let port = parsed_url.port_or_known_default().unwrap_or(443);
-                        let host = format!("{}:{}", domain, port);
-                        let mut stream = match TcpStream::connect(&host) {
-                            Ok(stream) => {
-                                stream.set_nodelay(true)?;
-                                tlsconnector.connect(domain, stream)?
-                            },
-                            Err(_) => return Err(ConnectorError::GatewayTimeout)
-                        };
-
-                        let new_path = parsed_url.path();
-                        let new_query = parsed_url.query().map(|q| format!("?{}", q)).unwrap_or_default();
-                        
-                        let req = format!("GET {}{} HTTP/1.1\r\nHost: {}\r\nAccept: text/event-stream{}\r\n\r\n", new_path, new_query, domain, auth_header);
-                        stream.write_all(req.as_bytes())?;
-                        stream.flush()?;
-                        
-                        // Recurse or parse headers again. For simplicity, just return a recursive call on a new temporary Connector.
-                        let temp_connector = Connector::new(domain, port)?;
-                        // Wait, our new event_stream signature takes path and params separately. We can just use the url path and query!
-                        let stripped_path = new_path.strip_suffix(".json").unwrap_or(new_path);
-                        return temp_connector.event_stream(stripped_path, if new_query.is_empty() { None } else { Some(&new_query) }, api_key);
-                    }
-                }
-            }
+        if let Some(key) = api_key {
+            builder = builder.bearer_auth(key);
         }
 
-        let mut body_data = headers_data[headers_end..].to_vec();
-        while !body_data.windows(2).any(|w| w == b"\n\n") {
-            let buffer = &mut [0; 8192];
-            let size = stream.read(buffer)?;
-            if size == 0 { break; }
-            body_data.extend_from_slice(&buffer[0..size]);
-        }
-
-        let pos = body_data.windows(2).position(|w| w == b"\n\n").unwrap_or(body_data.len());
-        let body_str = String::from_utf8_lossy(&body_data[..pos]).to_string();
-        let remaining = if pos + 2 < body_data.len() {
-            body_data[pos+2..].to_vec()
-        } else {
-            Vec::new()
-        };
-
-        Ok((Status::new(status_code, status_message), EventStream::try_from(body_str)?, stream, remaining))
-    }
-}
-
-impl Drop for Connector {
-    fn drop(&mut self) {
-        if let Ok(mut stream) = self.stream.lock() {
-            stream.shutdown().ok();
-        }
+        let res = builder.send().await?;
+        Ok(res)
     }
 }
 
@@ -390,6 +167,7 @@ impl Response {
 
 
 /// Types of stream events
+#[derive(Debug)]
 pub enum EventType {
     Put,
     Patch,
@@ -414,6 +192,7 @@ impl From<String> for EventType {
 
 
 /// Event stream parser
+#[derive(Debug)]
 pub struct EventStream {
     event: EventType,
     data: String,
@@ -493,32 +272,21 @@ impl Display for Method {
 /// Errors that can occur when getting a database response
 #[derive(Debug)]
 pub enum ConnectorError {
-    LockError,
-    GatewayTimeout,
-    InvalidResponse,
-    Io(std::io::Error),
-    Tls(String),
+    Reqwest(reqwest::Error),
     EventParse(String),
 }
 
 impl Display for ConnectorError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            ConnectorError::LockError => write!(f, "Lock error"),
-            ConnectorError::GatewayTimeout => write!(f, "Gateway Timeout"),
-            ConnectorError::InvalidResponse => write!(f, "Invalid response"),
-            ConnectorError::Io(e) => write!(f, "IO error: {}", e),
-            ConnectorError::Tls(e) => write!(f, "TLS error: {}", e),
+            ConnectorError::Reqwest(e) => write!(f, "Request error: {}", e),
             ConnectorError::EventParse(e) => write!(f, "Event parse error: {}", e),
         }
     }
 }
 
-
 impl Error for ConnectorError {}
 
-impl From<std::io::Error> for ConnectorError { fn from(e: std::io::Error) -> Self { ConnectorError::Io(e) } }
-impl From<native_tls::Error> for ConnectorError { fn from(e: native_tls::Error) -> Self { ConnectorError::Tls(e.to_string()) } }
-impl From<native_tls::HandshakeError<std::net::TcpStream>> for ConnectorError { fn from(e: native_tls::HandshakeError<std::net::TcpStream>) -> Self { ConnectorError::Tls(e.to_string()) } }
+impl From<reqwest::Error> for ConnectorError { fn from(e: reqwest::Error) -> Self { ConnectorError::Reqwest(e) } }
 impl From<std::string::FromUtf8Error> for ConnectorError { fn from(e: std::string::FromUtf8Error) -> Self { ConnectorError::EventParse(e.to_string()) } }
 impl From<&'static str> for ConnectorError { fn from(e: &'static str) -> Self { ConnectorError::EventParse(e.to_string()) } }

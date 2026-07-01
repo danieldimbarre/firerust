@@ -4,19 +4,20 @@ use serde_json::Value;
 use std::error::Error;
 
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
     let client = FirebaseClient::new(std::env::var("FIREBASE_URL")?)?;
     let reference = client.reference("/data");
     
     reference.on_snapshot(| data: Value | {
         println!("Value: {:?}", data);
         Ok(())
-    }, |err| eprintln!("Error: {}", err))?;
+    }, |err| eprintln!("Error: {}", err)).await?;
 
     reference.on_snapshot(| data: Data | {
         println!("Data: {:?}", data);
         Ok(())
-    }, |err| eprintln!("Error: {}", err))?.join().unwrap();
+    }, |err| eprintln!("Error: {}", err)).await?.await.unwrap();
 
     Ok(())
 }

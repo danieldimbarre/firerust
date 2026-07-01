@@ -5,6 +5,7 @@
 //! ```toml
 //! [dependencies]
 //! firerust = { version = "1.0.0" }
+//! tokio = { version = "1", features = ["full"] }
 //! ```
 //! 
 //! # Examples
@@ -13,14 +14,15 @@
 //! use firerust::{FirebaseClient, FirebaseError};
 //! use serde_json::Value;
 //!
-//! fn main() -> Result<(), FirebaseError> {
+//! #[tokio::main]
+//! async fn main() -> Result<(), FirebaseError> {
 //!     let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
 //!     let reference = client.reference("/");
 //! 
 //!     reference.set(serde_json::json!({
 //!         "message": "Hello, world!",
-//!     }))?;
-//!     println!("{:?}", reference.get::<Value>());
+//!     })).await?;
+//!     println!("{:?}", reference.get::<Value>().await?);
 //! 
 //!     Ok(())
 //! }
@@ -31,11 +33,10 @@ use connector::{ Connector, Method, EventStream , EventType };
 use std::fmt::{ Display, Formatter };
 use serde::de::DeserializeOwned;
 use std::sync::{ Arc, Mutex };
-use std::thread::JoinHandle;
+use tokio::task::JoinHandle;
 use std::error::Error;
 use serde_json::Value;
 use serde::Serialize;
-use std::io::Read;
 use url::Url;
 
 
@@ -67,12 +68,12 @@ impl FirebaseClient {
     /// 
     /// # Example
     /// ```rust,no_run
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use firerust::FirebaseClient;
     /// 
     /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
-/// # Ok(())
-/// # }
+    /// # Ok(())
+    /// # }
     /// ```
     /// 
     /// # Errors
@@ -107,13 +108,13 @@ impl FirebaseClient {
     /// 
     /// # Example
     /// ```rust,no_run
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use firerust::FirebaseClient;
     /// 
     /// let mut client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
     /// client.auth("ID_TOKEN");
-/// # Ok(())
-/// # }
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn auth(&mut self, api_key: impl ToString) {
         self.api_key = Some(api_key.to_string());
@@ -123,13 +124,13 @@ impl FirebaseClient {
     /// 
     /// # Example
     /// ```rust,no_run
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use firerust::FirebaseClient;
     /// 
     /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
     /// let reference = client.reference("/");
-/// # Ok(())
-/// # }
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn reference(&self, path: impl ToString) -> RealtimeReference<'_> {
         RealtimeReference::new(self, path.to_string())
@@ -145,7 +146,7 @@ pub struct RealtimeReference<'a> {
 
 impl<'a> RealtimeReference<'a> {
 
-    fn write_request(&self, method: Method, data: Option<&str>) -> Result<Option<String>, FirebaseError> {
+    async fn write_request(&self, method: Method, data: Option<&str>) -> Result<Option<String>, FirebaseError> {
         let params = "?print=silent";
         
         let response = self.client.connector.request(
@@ -154,7 +155,7 @@ impl<'a> RealtimeReference<'a> {
             Some(params),
             data,
             self.client.api_key.as_deref()
-        )?;
+        ).await?;
 
         let code = response.status().code();
         if code != 200 && code != 204 {
@@ -176,14 +177,14 @@ impl<'a> RealtimeReference<'a> {
     /// 
     /// # Example
     /// ```rust,no_run
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use firerust::FirebaseClient;
     /// 
     /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
     /// let reference = client.reference("/");
     /// let child_reference = reference.child("child");
-/// # Ok(())
-/// # }
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn child(&self, path: &str) -> RealtimeReference<'a> {
         RealtimeReference::new(self.client, format!("{}/{}", self.path, path))
@@ -193,20 +194,20 @@ impl<'a> RealtimeReference<'a> {
     /// 
     /// # Example
     /// ```rust,no_run
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use firerust::FirebaseClient;
-    /// use serde_json::Value;
-    /// 
-    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
-    /// assert_eq!(client.reference("/").get::<Value>().is_ok(), true);
-/// # Ok(())
-/// # }
+    /// # use firerust::{FirebaseClient, FirebaseError};
+    /// # use serde_json::Value;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), FirebaseError> {
+    ///     let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    ///     assert_eq!(client.reference("/").get::<Value>().await.is_ok(), true);
+    /// # Ok(())
+    /// # }
     /// ```
     /// 
     /// # Errors
     /// Returns an error if the value is not a valid Response
-    pub fn get<T>(&self) -> Result<T, FirebaseError> where T: DeserializeOwned {
-        let response = self.client.connector.request(Method::Get, &self.path, None, None, self.client.api_key.as_deref())?;
+    pub async fn get<T>(&self) -> Result<T, FirebaseError> where T: DeserializeOwned {
+        let response = self.client.connector.request(Method::Get, &self.path, None, None, self.client.api_key.as_deref()).await?;
 
         if response.status().code() != 200 {
             return Err(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message())));
@@ -219,19 +220,19 @@ impl<'a> RealtimeReference<'a> {
     /// 
     /// # Example
     /// ```rust,no_run
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use firerust::FirebaseClient;
-    /// 
-    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
-    /// client.reference("/").set(serde_json::json!({
-    ///    "message": "Hello, world!",
-    /// }))?;
-/// # Ok(())
-/// # }
+    /// # use firerust::{FirebaseClient, FirebaseError};
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), FirebaseError> {
+    ///     let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    ///     client.reference("/").set(serde_json::json!({
+    ///        "message": "Hello, world!",
+    ///     })).await?;
+    /// # Ok(())
+    /// # }
     /// ```
-    pub fn set<T>(&self, data: T) -> Result<(), FirebaseError> where T: Serialize {
+    pub async fn set<T>(&self, data: T) -> Result<(), FirebaseError> where T: Serialize {
         let data = serde_json::to_string(&data)?;
-        self.write_request(Method::Put, Some(&data))?;
+        self.write_request(Method::Put, Some(&data)).await?;
         Ok(())
     }
 
@@ -239,19 +240,19 @@ impl<'a> RealtimeReference<'a> {
     /// 
     /// # Example
     /// ```rust,no_run
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use firerust::FirebaseClient;
-    /// 
-    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
-    /// client.reference("/posts").set_unique(serde_json::json!({
-    ///     "message": "Hello, world!",
-    /// }))?;
-/// # Ok(())
-/// # }
+    /// # use firerust::{FirebaseClient, FirebaseError};
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), FirebaseError> {
+    ///     let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    ///     client.reference("/posts").set_unique(serde_json::json!({
+    ///         "message": "Hello, world!",
+    ///     })).await?;
+    /// # Ok(())
+    /// # }
     /// ```
-    pub fn set_unique<T>(&self, data: T) -> Result<String, FirebaseError> where T: Serialize {
+    pub async fn set_unique<T>(&self, data: T) -> Result<String, FirebaseError> where T: Serialize {
         let data = serde_json::to_string(&data)?;
-        let res = self.write_request(Method::Post, Some(&data))?.unwrap_or_default();
+        let res = self.write_request(Method::Post, Some(&data)).await?.unwrap_or_default();
         let value: serde_json::Value = serde_json::from_str(&res)?;
         if let Some(name) = value.get("name") {
             if let Some(name_str) = name.as_str() {
@@ -265,19 +266,19 @@ impl<'a> RealtimeReference<'a> {
     /// 
     /// # Example
     /// ```rust,no_run
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use firerust::FirebaseClient;
-    /// 
-    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
-    /// client.reference("/").update(serde_json::json!({
-    ///     "message": "New hello, world!",
-    /// }))?;
-/// # Ok(())
-/// # }
+    /// # use firerust::{FirebaseClient, FirebaseError};
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), FirebaseError> {
+    ///     let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    ///     client.reference("/").update(serde_json::json!({
+    ///         "message": "New hello, world!",
+    ///     })).await?;
+    /// # Ok(())
+    /// # }
     /// ```
-    pub fn update<T>(&self, data: T) -> Result<(), FirebaseError> where T: Serialize {
+    pub async fn update<T>(&self, data: T) -> Result<(), FirebaseError> where T: Serialize {
         let data = serde_json::to_string(&data)?;
-        self.write_request(Method::Patch, Some(&data))?;
+        self.write_request(Method::Patch, Some(&data)).await?;
         Ok(())
     }
 
@@ -285,16 +286,16 @@ impl<'a> RealtimeReference<'a> {
     /// 
     /// # Example
     /// ```rust,no_run
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use firerust::FirebaseClient;
-    /// 
-    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
-    /// client.reference("/").delete()?;
-/// # Ok(())
-/// # }
+    /// # use firerust::{FirebaseClient, FirebaseError};
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), FirebaseError> {
+    ///     let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    ///     client.reference("/").delete().await?;
+    /// # Ok(())
+    /// # }
     /// ```
-    pub fn delete(&self) -> Result<(), FirebaseError> {
-        self.write_request(Method::Delete, None)?;
+    pub async fn delete(&self) -> Result<(), FirebaseError> {
+        self.write_request(Method::Delete, None).await?;
         Ok(())
     }
 
@@ -302,51 +303,49 @@ impl<'a> RealtimeReference<'a> {
     /// 
     /// # Example
     /// ```rust,no_run
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use firerust::FirebaseClient;
-    /// use serde_json::Value;
-    /// 
-    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
-    /// client.reference("/").on_snapshot(|snapshot: Value| {
-    ///     assert_eq!(snapshot["message"].as_str(), Some("Hello, world!"));
-    ///     Ok(())
-    /// }, |_| {});
-/// # Ok(())
-/// # }
+    /// # use firerust::{FirebaseClient, FirebaseError};
+    /// # use serde_json::Value;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), FirebaseError> {
+    ///     let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    ///     client.reference("/").on_snapshot(|snapshot: Value| {
+    ///         assert_eq!(snapshot["message"].as_str(), Some("Hello, world!"));
+    ///         Ok(())
+    ///     }, |_| {}).await?;
+    /// # Ok(())
+    /// # }
     /// ```
-    pub fn on_snapshot<T, F, E>(&self, callback: F, on_error: E) -> Result<JoinHandle<()>, FirebaseError> where 
+    pub async fn on_snapshot<T, F, E>(&self, callback: F, on_error: E) -> Result<JoinHandle<()>, FirebaseError> where 
         T: Send + 'static,
-        F: Send + 'static,
-        E: Send + 'static,
+        F: Send + Sync + 'static,
+        E: Send + Sync + 'static,
         T: Serialize + DeserializeOwned,
         F: Fn(T) -> Result<(), FirebaseError>,
         E: Fn(FirebaseError) -> ()
     {
-        let (status, event_stream, mut stream, initial_buffer) = self.client.connector.event_stream(&self.path, None, self.client.api_key.as_deref())?;
+        let res = self.client.connector.event_stream(&self.path, None, self.client.api_key.as_deref()).await?;
 
-        if status.code() != 200 {
-            return Err(FirebaseError::new(format!("{} {}", status.code(), status.message())));
+        if res.status().as_u16() != 200 {
+            return Err(FirebaseError::new(format!("{} {}", res.status().as_u16(), res.status().canonical_reason().unwrap_or("Unknown"))));
         }
 
-        let data = serde_json::from_str::<Value>(event_stream.data())?;
-
-        let snap = match data.get("data") {
-            Some(snap) => Arc::new(Mutex::new(snap.clone())),
-            None => return Err(FirebaseError::new("Invalid data"))
-        };
-
-        match snap.clone().lock() {
-            Ok(snap) => {
-                let data = serde_json::from_value::<T>(snap.clone())?;
-                callback(data)?;
-            },
-            Err(_) => return Err(FirebaseError::new("Invalid data"))
-        };
-
-        Ok(std::thread::spawn(move || {
-            let mut buffer = initial_buffer;
+        Ok(tokio::spawn(async move {
+            use futures_util::StreamExt;
+            let mut stream = res.bytes_stream();
+            let mut buffer = Vec::new();
+            let mut snap_arc: Option<Arc<Mutex<Value>>> = None;
             
-            loop {
+            while let Some(chunk_res) = stream.next().await {
+                let chunk = match chunk_res {
+                    Ok(c) => c,
+                    Err(e) => {
+                        on_error(FirebaseError::new(e.to_string()));
+                        continue;
+                    }
+                };
+
+                buffer.extend_from_slice(&chunk);
+
                 while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
                     let event_data = buffer[..pos].to_vec();
                     buffer.drain(..pos + 2);
@@ -375,25 +374,34 @@ impl<'a> RealtimeReference<'a> {
                     };
 
                     let snapshot = match data.get("data") {
-                        Some(snap) => snap.clone(),
+                        Some(s) => s.clone(),
                         None => continue
                     };
 
                     match event_stream.event() {
                         EventType::Put => {
-                            let mut snap = match snap.lock() {
-                                Ok(snap) => snap,
+                            if snap_arc.is_none() {
+                                snap_arc = Some(Arc::new(Mutex::new(snapshot.clone())));
+                                if let Ok(data) = serde_json::from_value::<T>(snapshot.clone()) {
+                                    if let Err(e) = callback(data) { on_error(e); }
+                                }
+                                continue;
+                            }
+
+                            let snap = snap_arc.as_ref().unwrap();
+                            let mut snap_lock = match snap.lock() {
+                                Ok(l) => l,
                                 Err(e) => { on_error(FirebaseError::new(e.to_string())); continue; }
                             };
 
-                            let pointer = match snap.pointer_mut(&path) {
+                            let pointer = match snap_lock.pointer_mut(&path) {
                                 Some(pointer) => pointer,
                                 None => continue
                             };
 
                             *pointer = snapshot;
 
-                            let data = match serde_json::from_value::<T>(snap.clone()) {
+                            let data = match serde_json::from_value::<T>(snap_lock.clone()) {
                                 Ok(data) => data,
                                 Err(e) => { on_error(FirebaseError::new(e.to_string())); continue; },
                             };
@@ -401,19 +409,22 @@ impl<'a> RealtimeReference<'a> {
                             if let Err(e) = callback(data) { on_error(e); }
                         },
                         EventType::Patch => {
-                            let mut snap = match snap.lock() {
-                                Ok(snap) => snap,
+                            if snap_arc.is_none() { continue; }
+                            let snap = snap_arc.as_ref().unwrap();
+                            
+                            let mut snap_lock = match snap.lock() {
+                                Ok(l) => l,
                                 Err(e) => { on_error(FirebaseError::new(e.to_string())); continue; }
                             };
 
-                            let pointer = match snap.pointer_mut(&path) {
+                            let pointer = match snap_lock.pointer_mut(&path) {
                                 Some(pointer) => pointer,
                                 None => continue
                             };
 
                             let _ = RealtimeReference::merge_value(pointer, snapshot);
 
-                            let data = match serde_json::from_value::<T>(snap.clone()) {
+                            let data = match serde_json::from_value::<T>(snap_lock.clone()) {
                                 Ok(data) => data,
                                 Err(e) => { on_error(FirebaseError::new(e.to_string())); continue; }
                             };
@@ -426,18 +437,6 @@ impl<'a> RealtimeReference<'a> {
                         EventType::Unknown(_) => continue,
                     };
                 }
-
-                let mut buf = [0; 1024];
-                let len = match stream.read(&mut buf) {
-                    Ok(len) => len,
-                    Err(_) => break
-                };
-
-                if len == 0 {
-                    break;
-                }
-
-                buffer.extend_from_slice(&buf[..len]);
             }
         }))
     }
@@ -501,10 +500,6 @@ mod tests {
         let mut a = json!({"foo": "bar"});
         let b = json!({"baz": "qux"});
         
-        // Simulating a Put event (replace completely)
-        // Actually, RealtimeReference::merge_value replaces `a` with `b` if `b` is not an Object,
-        // OR it recursively updates. 
-        // Our merge_value doesn't take EventType. It just merges trees.
         RealtimeReference::<'static>::merge_value(&mut a, b).unwrap();
         assert_eq!(a, json!({"foo": "bar", "baz": "qux"}));
     }

@@ -109,7 +109,7 @@ impl Connector {
             None => String::from("\r\n\r\n")
         };
 
-        let req = format!("{} {}.json{} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5, max=100\r\nAccept: application/json; charset=utf-8\r\nCache-Control: no-cache{}{}", method, path, params_str, self.domain, auth_header, data_header);
+        let req = format!("{} {}.json{} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nAccept: application/json; charset=utf-8\r\nCache-Control: no-cache{}{}", method, path, params_str, self.domain, auth_header, data_header);
         stream.write_all(req.as_bytes())?;
         
         let mut headers_data = Vec::new();

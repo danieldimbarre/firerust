@@ -110,7 +110,7 @@ impl FirebaseClient {
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use firerust::FirebaseClient;
     /// 
-    /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
+    /// let mut client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
     /// client.auth("ID_TOKEN");
 /// # Ok(())
 /// # }
@@ -310,7 +310,7 @@ impl<'a> RealtimeReference<'a> {
     /// client.reference("/").on_snapshot(|snapshot: Value| {
     ///     assert_eq!(snapshot["message"].as_str(), Some("Hello, world!"));
     ///     Ok(())
-    /// });
+    /// }, |_| {});
 /// # Ok(())
 /// # }
     /// ```

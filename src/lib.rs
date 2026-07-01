@@ -70,7 +70,7 @@ impl FirebaseClient {
 
         let domain = match url.domain() {
             Some(domain) => {
-                if !domain.contains(".firebaseio.com") && !domain.contains(".firebasedatabase.app") {
+                if !domain.ends_with(".firebaseio.com") && !domain.ends_with(".firebasedatabase.app") {
                     return Err(Box::new(FirebaseError::new("Invalid domain")));
                 }
 
@@ -419,22 +419,20 @@ impl RealtimeReference {
 
     #[doc(hidden)]
     pub fn merge_value(a: &mut Value, b: Value) -> Result<(), Box<dyn Error>> {
-        match (a.clone(), b.clone()) {
-            (Value::Object(mut a), Value::Object(b)) => {
-                for (k, v) in b {
+        match (a, b) {
+            (Value::Object(map_a), Value::Object(map_b)) => {
+                for (k, v) in map_b {
                     if v.is_null() {
-                        a.remove(&k);
+                        map_a.remove(&k);
                     } else {
-                        RealtimeReference::merge_value(a.entry(k).or_insert(Value::Null), v)?;
+                        RealtimeReference::merge_value(map_a.entry(k).or_insert(Value::Null), v)?;
                     }
                 }
-    
-                return Ok(());
             }
-            _ => {
-                *a = b;
+            (a_ref, new_b) => {
+                *a_ref = new_b;
             }
-        };
+        }
 
         Ok(())
     }

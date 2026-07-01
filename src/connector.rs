@@ -29,7 +29,7 @@ pub struct Connector {
 impl Connector {
 
     /// Creates a new connector
-    pub fn new(domain: impl ToString, port: u16) -> Result<Connector, Box<dyn Error>> {
+    pub fn new(domain: impl ToString, port: u16) -> Result<Connector, ConnectorError> {
         let domain_str = domain.to_string();
         let tlsconnector = TlsConnector::new()?;
         let host = format!("{}:{}", domain_str, port);
@@ -39,7 +39,7 @@ impl Connector {
                 stream.set_nodelay(true)?;
                 tlsconnector.connect(&domain_str, stream)?
             },
-            Err(_) => return Err(Box::new(ConnectorError::GatewayTimeout))
+            Err(_) => return Err(ConnectorError::GatewayTimeout)
         };
 
         Ok(Connector {
@@ -58,7 +58,7 @@ impl Connector {
     /// let connector = Connector::new("docs-example.firebaseio.com", 443)?;
     /// connector.reconnect()?;
     /// ```
-    pub fn reconnect(&self) -> Result<(), Box<dyn Error>> {
+    pub fn reconnect(&self) -> Result<(), ConnectorError> {
         let tlsconnector = TlsConnector::new()?;
 
         let stream = match TcpStream::connect(&self.host) {
@@ -66,14 +66,14 @@ impl Connector {
                 stream.set_nodelay(true)?;
                 tlsconnector.connect(&self.domain, stream)?
             },
-            Err(_) => return Err(Box::new(ConnectorError::GatewayTimeout))
+            Err(_) => return Err(ConnectorError::GatewayTimeout)
         };
 
         match self.stream.lock() {
             Ok(mut old_stream) => {
                 *old_stream = stream;
             },
-            Err(_) => return Err(Box::new(ConnectorError::LockError))
+            Err(_) => return Err(ConnectorError::LockError)
         };
         
         Ok(())
@@ -88,10 +88,10 @@ impl Connector {
     /// let connector = Connector::new("docs-example.firebaseio.com", 443)?;
     /// connector.request(Method::Get, "/", None, None)?;
     /// ```
-    pub fn request(&self, method: Method, path: impl ToString, params: Option<String>, data: Option<String>) -> Result<Response, Box<dyn Error>> {
+    pub fn request(&self, method: Method, path: impl ToString, params: Option<String>, data: Option<String>) -> Result<Response, ConnectorError> {
         let mut stream = match self.stream.lock() {
             Ok(stream) => stream,
-            Err(_) => return Err(Box::new(ConnectorError::GatewayTimeout))
+            Err(_) => return Err(ConnectorError::GatewayTimeout)
         };
 
         stream.write_all(format!("{} {}.json{} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5, max=100\r\nAccept: application/json; charset=utf-8\r\nCache-Control: no-cache{}", method.to_string(), path.to_string(), match params {
@@ -120,7 +120,7 @@ impl Connector {
         }
 
         if headers_end == 0 {
-            return Err(Box::new(ConnectorError::InvalidResponse));
+            return Err(ConnectorError::InvalidResponse);
         }
 
         let header_str = String::from_utf8_lossy(&headers_data[..headers_end]).to_string();
@@ -129,7 +129,7 @@ impl Connector {
         let mut header_lines = header_str.lines();
         let status_line = match header_lines.next() {
             Some(line) => line.split(' ').collect::<Vec<&str>>(),
-            None => return Err(Box::new(ConnectorError::InvalidResponse))
+            None => return Err(ConnectorError::InvalidResponse)
         };
 
         let status_code = status_line.get(1).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
@@ -158,7 +158,7 @@ impl Connector {
     }
 
     /// Connect to the server with event stream
-    pub fn event_stream(&self, path: String, params: String) -> Result<(Status, EventStream, TlsStream<TcpStream>, Vec<u8>), Box<dyn Error>> {
+    pub fn event_stream(&self, path: String, params: String) -> Result<(Status, EventStream, TlsStream<TcpStream>, Vec<u8>), ConnectorError> {
         let tlsconnector = TlsConnector::new()?;
 
         let mut stream = match TcpStream::connect(self.host.clone()) {
@@ -166,7 +166,7 @@ impl Connector {
                 stream.set_nodelay(true)?;
                 tlsconnector.connect(&self.domain, stream)?
             },
-            Err(_) => return Err(Box::new(ConnectorError::GatewayTimeout))
+            Err(_) => return Err(ConnectorError::GatewayTimeout)
         };
 
         stream.write_all(format!("GET {}.json{} HTTP/1.1\r\nHost: {}\r\nAccept: text/event-stream\r\n\r\n", path, params, self.domain).as_bytes())?;
@@ -190,7 +190,7 @@ impl Connector {
         }
 
         if headers_end == 0 {
-            return Err(Box::new(ConnectorError::InvalidResponse));
+            return Err(ConnectorError::InvalidResponse);
         }
 
         let header_str = String::from_utf8_lossy(&headers_data[..headers_end]).to_string();
@@ -198,7 +198,7 @@ impl Connector {
         let mut header_lines = header_str.lines();
         let status_line = match header_lines.next() {
             Some(line) => line.split(' ').collect::<Vec<&str>>(),
-            None => return Err(Box::new(ConnectorError::InvalidResponse))
+            None => return Err(ConnectorError::InvalidResponse)
         };
 
         let status_code = status_line.get(1).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
@@ -402,6 +402,9 @@ pub enum ConnectorError {
     LockError,
     GatewayTimeout,
     InvalidResponse,
+    Io(std::io::Error),
+    Tls(String),
+    EventParse(String),
 }
 
 impl Display for ConnectorError {
@@ -410,8 +413,18 @@ impl Display for ConnectorError {
             ConnectorError::LockError => write!(f, "Lock error"),
             ConnectorError::GatewayTimeout => write!(f, "Gateway Timeout"),
             ConnectorError::InvalidResponse => write!(f, "Invalid response"),
+            ConnectorError::Io(e) => write!(f, "IO error: {}", e),
+            ConnectorError::Tls(e) => write!(f, "TLS error: {}", e),
+            ConnectorError::EventParse(e) => write!(f, "Event parse error: {}", e),
         }
     }
 }
 
+
 impl Error for ConnectorError {}
+
+impl From<std::io::Error> for ConnectorError { fn from(e: std::io::Error) -> Self { ConnectorError::Io(e) } }
+impl From<native_tls::Error> for ConnectorError { fn from(e: native_tls::Error) -> Self { ConnectorError::Tls(e.to_string()) } }
+impl From<native_tls::HandshakeError<std::net::TcpStream>> for ConnectorError { fn from(e: native_tls::HandshakeError<std::net::TcpStream>) -> Self { ConnectorError::Tls(e.to_string()) } }
+impl From<std::string::FromUtf8Error> for ConnectorError { fn from(e: std::string::FromUtf8Error) -> Self { ConnectorError::EventParse(e.to_string()) } }
+impl From<&'static str> for ConnectorError { fn from(e: &'static str) -> Self { ConnectorError::EventParse(e.to_string()) } }

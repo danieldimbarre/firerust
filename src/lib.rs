@@ -14,7 +14,7 @@
 //! use serde_json::Value;
 //! use std::error::Error;
 //!
-//! fn main() -> Result<(), Box<dyn Error>> {
+//! fn main() -> Result<(), FirebaseError> {
 //!     let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
 //!     let reference = client.reference("/");
 //! 
@@ -65,18 +65,18 @@ impl FirebaseClient {
     /// 
     /// # Errors
     /// Returns an error if the url is invalid or the connection to the server fails
-    pub fn new(url: impl ToString) -> Result<FirebaseClient, Box<dyn Error>> {
+    pub fn new(url: impl ToString) -> Result<FirebaseClient, FirebaseError> {
         let url = Url::parse(&url.to_string())?;
 
         let domain = match url.domain() {
             Some(domain) => {
                 if !domain.ends_with(".firebaseio.com") && !domain.ends_with(".firebasedatabase.app") {
-                    return Err(Box::new(FirebaseError::new("Invalid domain")));
+                    return Err(FirebaseError::new("Invalid domain"));
                 }
 
                 domain.to_string()
             },
-            None => return Err(Box::new(FirebaseError::new("Invalid domain")))
+            None => return Err(FirebaseError::new("Invalid domain"))
         };
 
         let port = match url.port_or_known_default() {
@@ -162,14 +162,14 @@ impl<'a> RealtimeReference<'a> {
     /// 
     /// # Errors
     /// Returns an error if the value is not a valid Response
-    pub fn get<T>(&self) -> Result<T, Box<dyn Error>> where T: Serialize + DeserializeOwned {
+    pub fn get<T>(&self) -> Result<T, FirebaseError> where T: Serialize + DeserializeOwned {
         let response = self.client.connector.request(Method::Get, self.path.clone(), match self.client.api_key {
             Some(ref api_key) => Some(format!("?auth={}", api_key)),
             None => None
         }, None)?;
 
         if response.status().code() != 200 {
-            return Err(Box::new(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message()))));
+            return Err(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message())));
         }
 
         Ok(serde_json::from_str(response.body())?)
@@ -186,7 +186,7 @@ impl<'a> RealtimeReference<'a> {
     ///    "message": "Hello, world!",
     /// }))?;
     /// ```
-    pub fn set<T>(&self, data: T) -> Result<(), Box<dyn Error>>  where T: Serialize {
+    pub fn set<T>(&self, data: T) -> Result<(), FirebaseError>  where T: Serialize {
         let data = serde_json::to_string(&data)?;
 
         let response = self.client.connector.request(Method::Put, self.path.clone(), Some(match self.client.api_key {
@@ -195,7 +195,7 @@ impl<'a> RealtimeReference<'a> {
         }), Some(data))?;
 
         if response.status().code() != 204 {
-            return Err(Box::new(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message()))));
+            return Err(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message())));
         }
 
         Ok(())
@@ -212,7 +212,7 @@ impl<'a> RealtimeReference<'a> {
     ///     "message": "Hello, world!",
     /// }))?;
     /// ```
-    pub fn set_unique<T>(&self, data: T) -> Result<(), Box<dyn Error>>  where T: Serialize {
+    pub fn set_unique<T>(&self, data: T) -> Result<(), FirebaseError>  where T: Serialize {
         let data = serde_json::to_string(&data)?;
 
         let response = self.client.connector.request(Method::Post, self.path.clone(), Some(match self.client.api_key {
@@ -221,7 +221,7 @@ impl<'a> RealtimeReference<'a> {
         }), Some(data))?;
 
         if response.status().code() != 204 {
-            return Err(Box::new(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message()))));
+            return Err(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message())));
         }
 
         Ok(())
@@ -238,7 +238,7 @@ impl<'a> RealtimeReference<'a> {
     ///     "message": "New hello, world!",
     /// }))?;
     /// ```
-    pub fn update<T>(&self, data: T) -> Result<(), Box<dyn Error>> where T: Serialize {
+    pub fn update<T>(&self, data: T) -> Result<(), FirebaseError> where T: Serialize {
         let data = serde_json::to_string(&data)?;
 
         let response = self.client.connector.request(Method::Patch, self.path.clone(), Some(match self.client.api_key {
@@ -247,7 +247,7 @@ impl<'a> RealtimeReference<'a> {
         }), Some(data))?;
 
         if response.status().code() != 204 {
-            return Err(Box::new(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message()))));
+            return Err(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message())));
         }
 
         Ok(())
@@ -262,14 +262,14 @@ impl<'a> RealtimeReference<'a> {
     /// let client = FirebaseClient::new("https://docs-examples.firebaseio.com/")?;
     /// client.reference("/").delete()?;
     /// ```
-    pub fn delete(&self) -> Result<(), Box<dyn Error>> {
+    pub fn delete(&self) -> Result<(), FirebaseError> {
         let response = self.client.connector.request(Method::Delete, self.path.clone(), Some(match self.client.api_key {
             Some(ref api_key) => format!("?print=silent&auth={}", api_key),
             None => "?print=silent".to_string()
         }), None)?;
 
         if response.status().code() != 204 {
-            return Err(Box::new(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message()))));
+            return Err(FirebaseError::new(format!("{} {}", response.status().code(), response.status().message())));
         }
 
         Ok(())
@@ -287,11 +287,12 @@ impl<'a> RealtimeReference<'a> {
     ///     assert_eq!(snapshot["message"].as_str(), Some("Hello, world!"));
     ///     Ok(())
     /// });
-    pub fn on_snapshot<T, F>(&self, callback: F) -> Result<JoinHandle<()>, Box<dyn Error>> where 
+    /// ```
+    pub fn on_snapshot<T, F>(&self, callback: F) -> Result<JoinHandle<()>, FirebaseError> where 
         T: Send + 'static,
-        F: Send + Copy + 'static,
+        F: Send + 'static,
         T: Serialize + DeserializeOwned,
-        F: FnOnce(T) -> Result<(), Box<dyn Error>>
+        F: Fn(T) -> Result<(), FirebaseError>
     {
         let (status, event_stream, mut stream, initial_buffer) = self.client.connector.event_stream(self.path.clone(), match self.client.api_key {
             Some(ref api_key) => format!("?auth={}", api_key),
@@ -299,14 +300,14 @@ impl<'a> RealtimeReference<'a> {
         })?;
 
         if status.code() != 200 {
-            return Err(Box::new(FirebaseError::new(format!("{} {}", status.code(), status.message()))));
+            return Err(FirebaseError::new(format!("{} {}", status.code(), status.message())));
         }
 
         let data = serde_json::from_str::<Value>(event_stream.data())?;
 
         let snap = match data.get("data") {
             Some(snap) => Arc::new(Mutex::new(snap.clone())),
-            None => return Err(Box::new(FirebaseError::new("Invalid data")))
+            None => return Err(FirebaseError::new("Invalid data"))
         };
 
         match snap.clone().lock() {
@@ -314,7 +315,7 @@ impl<'a> RealtimeReference<'a> {
                 let data = serde_json::from_value::<T>(snap.clone())?;
                 callback(data)?;
             },
-            Err(_) => return Err(Box::new(FirebaseError::new("Invalid data")))
+            Err(_) => return Err(FirebaseError::new("Invalid data"))
         };
 
         Ok(std::thread::spawn(move || {
@@ -417,7 +418,7 @@ impl<'a> RealtimeReference<'a> {
     }
 
     #[doc(hidden)]
-    pub fn merge_value(a: &mut Value, b: Value) -> Result<(), Box<dyn Error>> {
+    pub fn merge_value(a: &mut Value, b: Value) -> Result<(), FirebaseError> {
         match (a, b) {
             (Value::Object(map_a), Value::Object(map_b)) => {
                 for (k, v) in map_b {
@@ -440,7 +441,7 @@ impl<'a> RealtimeReference<'a> {
 
 /// Firebase client error
 #[derive(Debug)]
-struct FirebaseError {
+pub struct FirebaseError {
     message: String
 }
 
@@ -453,6 +454,11 @@ impl FirebaseError {
 }
 
 impl Error for FirebaseError {}
+
+impl From<url::ParseError> for FirebaseError { fn from(e: url::ParseError) -> Self { FirebaseError::new(e) } }
+impl From<serde_json::Error> for FirebaseError { fn from(e: serde_json::Error) -> Self { FirebaseError::new(e) } }
+impl From<connector::ConnectorError> for FirebaseError { fn from(e: connector::ConnectorError) -> Self { FirebaseError::new(e) } }
+
 
 impl Display for FirebaseError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {

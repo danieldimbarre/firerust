@@ -12,7 +12,7 @@ A very simple library to implement the Firebase real-time database in your code 
     </center>
 </p>
 
-# Instalation
+# Installation
 Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
@@ -27,12 +27,12 @@ use firerust::FirebaseClient;
 
 Initialize a Firebase client without auth
 ```rust
-FirebaseClient::new("https:///<DATABASE_NAME>.firebaseio.com/")?;
+FirebaseClient::new("https://<DATABASE_NAME>.firebaseio.com/")?;
 ```
 
 Initialize a Firebase client with auth
 ```rust
-let mut client = FirebaseClient::new("https:///<DATABASE_NAME>.firebaseio.com/")?;
+let mut client = FirebaseClient::new("https://<DATABASE_NAME>.firebaseio.com/")?;
 client.auth("<ID_TOKEN>");
 ```
 

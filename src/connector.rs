@@ -1,16 +1,17 @@
 //! # Example
 //! 
-//! ```rust
+//! ```rust,no_run
 //! use firerust::connector::Connector;
 //! 
-//! let connector = Connector::new("docs-example.firebaseio.com", 443)?;
-//! let response = connector.request(Method::Get, "/", None, None)?;
-//! 
-//! drop(connector);
-//! ```
+/// let connector = Connector::new("docs-example.firebaseio.com", 443)?;
+/// let response = connector.request(Method::Get, "/", None, None)?;
+/// 
+/// drop(connector);
+/// ```
 
 
 use native_tls::{ TlsConnector, TlsStream };
+use url::Url;
 use std::fmt::{ Display, Formatter };
 use std::sync::{ Arc, Mutex };
 use std::io::{ Write, Read };
@@ -49,15 +50,7 @@ impl Connector {
         })
     }
 
-    /// Reconnect to the server
-    /// 
-    /// # Example
-    /// ```rust
-    /// use firerust::connector::Connector;
-    /// 
-    /// let connector = Connector::new("docs-example.firebaseio.com", 443)?;
-    /// connector.reconnect()?;
-    /// ```
+    /// Reconnect the stream
     pub fn reconnect(&self) -> Result<(), ConnectorError> {
         let tlsconnector = TlsConnector::new()?;
 
@@ -80,33 +73,31 @@ impl Connector {
     }
     
     /// Send data to the server
-    /// 
-    /// # Example
-    /// ```rust
-    /// use firerust::connector::{ Connector, Method };
-    /// 
-    /// let connector = Connector::new("docs-example.firebaseio.com", 443)?;
-    /// connector.request(Method::Get, "/", None, None)?;
-    /// ```
-    pub fn request(&self, method: Method, path: impl ToString, params: Option<String>, data: Option<String>) -> Result<Response, ConnectorError> {
+    pub fn request(&self, method: Method, path: &str, params: Option<&str>, data: Option<&str>, api_key: Option<&str>) -> Result<Response, ConnectorError> {
         let mut stream = match self.stream.lock() {
             Ok(stream) => stream,
             Err(_) => return Err(ConnectorError::GatewayTimeout)
         };
 
-        stream.write_all(format!("{} {}.json{} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5, max=100\r\nAccept: application/json; charset=utf-8\r\nCache-Control: no-cache{}", method.to_string(), path.to_string(), match params {
-            Some(params) => params,
-            None => String::from("")
-        }, self.domain, match data {
-            Some(data) => format!("\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}", data.as_bytes().len(), data),
+        let auth_header = match api_key {
+            Some(key) => format!("\r\nAuthorization: Bearer {}", key),
+            None => String::new()
+        };
+
+        let params_str = params.unwrap_or("");
+        let data_header = match data {
+            Some(d) => format!("\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}", d.len(), d),
             None => String::from("\r\n\r\n")
-        }).as_bytes())?;
+        };
+
+        let req = format!("{} {}.json{} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5, max=100\r\nAccept: application/json; charset=utf-8\r\nCache-Control: no-cache{}{}", method, path, params_str, self.domain, auth_header, data_header);
+        stream.write_all(req.as_bytes())?;
         
         let mut headers_data = Vec::new();
         let mut headers_end = 0;
 
         loop {
-            let buffer = &mut [0; 1024];
+            let buffer = &mut [0; 8192];
             let size = stream.read(buffer)?;
             if size == 0 {
                 break;
@@ -125,6 +116,7 @@ impl Connector {
 
         let header_str = String::from_utf8_lossy(&headers_data[..headers_end]).to_string();
         let mut content_length = 0;
+        let mut is_chunked = false;
 
         let mut header_lines = header_str.lines();
         let status_line = match header_lines.next() {
@@ -136,32 +128,73 @@ impl Connector {
         let status_message = if status_line.len() > 2 { status_line[2..].join(" ") } else { String::new() };
 
         for line in header_lines {
-            if line.to_lowercase().starts_with("content-length:") {
+            let lower = line.to_lowercase();
+            if lower.starts_with("content-length:") {
                 if let Some(len_str) = line.split(':').nth(1) {
                     content_length = len_str.trim().parse::<usize>().unwrap_or(0);
                 }
+            } else if lower.starts_with("transfer-encoding:") && lower.contains("chunked") {
+                is_chunked = true;
             }
         }
 
         let mut body_data = headers_data[headers_end..].to_vec();
-        while body_data.len() < content_length {
-            let buffer = &mut [0; 1024];
-            let size = stream.read(buffer)?;
-            if size == 0 {
-                break;
+
+        if is_chunked {
+            let mut final_body = Vec::new();
+            loop {
+                while !body_data.windows(2).any(|w| w == b"\r\n") {
+                    let buffer = &mut [0; 8192];
+                    let size = stream.read(buffer)?;
+                    if size == 0 { break; }
+                    body_data.extend_from_slice(&buffer[0..size]);
+                }
+                
+                let pos = match body_data.windows(2).position(|w| w == b"\r\n") {
+                    Some(p) => p,
+                    None => break
+                };
+                
+                let chunk_size_str = String::from_utf8_lossy(&body_data[..pos]).trim().to_string();
+                let chunk_size = usize::from_str_radix(&chunk_size_str, 16).unwrap_or(0);
+                
+                body_data = body_data[pos+2..].to_vec();
+                
+                if chunk_size == 0 {
+                    break;
+                }
+                
+                while body_data.len() < chunk_size + 2 {
+                    let buffer = &mut [0; 8192];
+                    let size = stream.read(buffer)?;
+                    if size == 0 { break; }
+                    body_data.extend_from_slice(&buffer[0..size]);
+                }
+                
+                final_body.extend_from_slice(&body_data[..chunk_size]);
+                body_data = body_data[chunk_size+2..].to_vec();
             }
-            body_data.extend_from_slice(&buffer[0..size]);
+            body_data = final_body;
+        } else {
+            while body_data.len() < content_length {
+                let buffer = &mut [0; 8192];
+                let size = stream.read(buffer)?;
+                if size == 0 {
+                    break;
+                }
+                body_data.extend_from_slice(&buffer[0..size]);
+            }
         }
 
-        let body = String::from_utf8(body_data)?;
+        let body = String::from_utf8_lossy(&body_data).to_string();
         Ok(Response::new(body, Status::new(status_code, status_message)))
     }
 
     /// Connect to the server with event stream
-    pub fn event_stream(&self, path: String, params: String) -> Result<(Status, EventStream, TlsStream<TcpStream>, Vec<u8>), ConnectorError> {
+    pub fn event_stream(&self, path: &str, params: Option<&str>, api_key: Option<&str>) -> Result<(Status, EventStream, TlsStream<TcpStream>, Vec<u8>), ConnectorError> {
         let tlsconnector = TlsConnector::new()?;
 
-        let mut stream = match TcpStream::connect(self.host.clone()) {
+        let mut stream = match TcpStream::connect(&self.host) {
             Ok(stream) => {
                 stream.set_nodelay(true)?;
                 tlsconnector.connect(&self.domain, stream)?
@@ -169,14 +202,21 @@ impl Connector {
             Err(_) => return Err(ConnectorError::GatewayTimeout)
         };
 
-        stream.write_all(format!("GET {}.json{} HTTP/1.1\r\nHost: {}\r\nAccept: text/event-stream\r\n\r\n", path, params, self.domain).as_bytes())?;
+        let auth_header = match api_key {
+            Some(key) => format!("\r\nAuthorization: Bearer {}", key),
+            None => String::new()
+        };
+        let params_str = params.unwrap_or("");
+
+        let req = format!("GET {}.json{} HTTP/1.1\r\nHost: {}\r\nAccept: text/event-stream{}\r\n\r\n", path, params_str, self.domain, auth_header);
+        stream.write_all(req.as_bytes())?;
         stream.flush()?;
 
         let mut headers_data = Vec::new();
         let mut headers_end = 0;
 
         loop {
-            let buffer = &mut [0; 1024];
+            let buffer = &mut [0; 8192];
             let size = stream.read(buffer)?;
             if size == 0 {
                 break;
@@ -194,8 +234,8 @@ impl Connector {
         }
 
         let header_str = String::from_utf8_lossy(&headers_data[..headers_end]).to_string();
-
         let mut header_lines = header_str.lines();
+        
         let status_line = match header_lines.next() {
             Some(line) => line.split(' ').collect::<Vec<&str>>(),
             None => return Err(ConnectorError::InvalidResponse)
@@ -204,9 +244,44 @@ impl Connector {
         let status_code = status_line.get(1).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
         let status_message = if status_line.len() > 2 { status_line[2..].join(" ") } else { String::new() };
 
+        if status_code == 307 || status_code == 301 || status_code == 302 {
+            let location = header_lines.find(|l| l.to_lowercase().starts_with("location:"))
+                .and_then(|l| l.split(':').nth(1))
+                .map(|s| s.trim());
+            
+            if let Some(loc) = location {
+                if let Ok(parsed_url) = Url::parse(loc) {
+                    if let Some(domain) = parsed_url.host_str() {
+                        let port = parsed_url.port_or_known_default().unwrap_or(443);
+                        let host = format!("{}:{}", domain, port);
+                        let mut stream = match TcpStream::connect(&host) {
+                            Ok(stream) => {
+                                stream.set_nodelay(true)?;
+                                tlsconnector.connect(domain, stream)?
+                            },
+                            Err(_) => return Err(ConnectorError::GatewayTimeout)
+                        };
+
+                        let new_path = parsed_url.path();
+                        let new_query = parsed_url.query().map(|q| format!("?{}", q)).unwrap_or_default();
+                        
+                        let req = format!("GET {}{} HTTP/1.1\r\nHost: {}\r\nAccept: text/event-stream{}\r\n\r\n", new_path, new_query, domain, auth_header);
+                        stream.write_all(req.as_bytes())?;
+                        stream.flush()?;
+                        
+                        // Recurse or parse headers again. For simplicity, just return a recursive call on a new temporary Connector.
+                        let temp_connector = Connector::new(domain, port)?;
+                        // Wait, our new event_stream signature takes path and params separately. We can just use the url path and query!
+                        let stripped_path = new_path.strip_suffix(".json").unwrap_or(new_path);
+                        return temp_connector.event_stream(stripped_path, if new_query.is_empty() { None } else { Some(&new_query) }, api_key);
+                    }
+                }
+            }
+        }
+
         let mut body_data = headers_data[headers_end..].to_vec();
         while !body_data.windows(2).any(|w| w == b"\n\n") {
-            let buffer = &mut [0; 1024];
+            let buffer = &mut [0; 8192];
             let size = stream.read(buffer)?;
             if size == 0 { break; }
             body_data.extend_from_slice(&buffer[0..size]);

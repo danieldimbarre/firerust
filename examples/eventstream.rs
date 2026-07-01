@@ -11,12 +11,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     reference.on_snapshot(| data: Value | {
         println!("Value: {:?}", data);
         Ok(())
-    })?;
+    }, |err| eprintln!("Error: {}", err))?;
 
     reference.on_snapshot(| data: Data | {
         println!("Data: {:?}", data);
         Ok(())
-    })?.join().unwrap();
+    }, |err| eprintln!("Error: {}", err))?.join().unwrap();
 
     Ok(())
 }
